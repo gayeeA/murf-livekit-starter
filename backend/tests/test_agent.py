@@ -1,7 +1,17 @@
+from unittest.mock import patch
+
 import pytest
 from livekit.agents import AgentSession, inference, llm
 
+import agent
 from agent import Assistant
+
+
+def test_build_turn_detection_falls_back_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ENABLE_TURN_DETECTION", "true")
+
+    with patch.object(agent, "MultilingualModel", side_effect=RuntimeError("model unavailable")):
+        assert agent.build_turn_detection() is None
 
 
 def _llm() -> llm.LLM:

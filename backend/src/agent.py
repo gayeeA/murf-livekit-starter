@@ -1,4 +1,5 @@
 import logging
+import os
 
 from dotenv import load_dotenv
 from livekit import rtc
@@ -14,20 +15,62 @@ from livekit.agents import (
     room_io,
 )
 from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
+ENABLE_TURN_DETECTION = os.getenv("ENABLE_TURN_DETECTION", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+    "y",
+}
+
+if ENABLE_TURN_DETECTION:
+    from livekit.plugins.turn_detector.multilingual import MultilingualModel
+else:
+    MultilingualModel = None
+
 # Change this prompt to change what your voice agent does.
 # See README.md for example prompts (customer support, language tutor, receptionist).
-SYSTEM_PROMPT = """You are a friendly and efficient customer support agent for a tech company. Help users with account issues, billing questions, and product troubleshooting. Be concise, empathetic, and solution-oriented. If you don't know something, say so honestly and offer to escalate. Your responses are concise and without complex formatting, emojis, or symbols."""
+#
+# Track: Financial Services — #VoiceForBharat
+# "Vitta Mitra" (Hindi for "money friend") is a plain-language financial helpline
+# for people who don't have easy access to a bank branch or financial advisor —
+# gig workers, daily-wage earners, first-time UPI users, and rural households.
+SYSTEM_PROMPT = """You are Vitta Mitra, a warm and patient financial helpline agent built for people in India who may not have easy access to a bank branch or financial advisor — gig workers, daily-wage earners, first-time UPI users, and rural households.
+
+Your job is to explain everyday financial topics in plain, simple language: savings and budgeting basics, how UPI works and how to spot UPI/digital payment scams, how EMIs and interest work, KYC steps, and where to go for official help (bank branch, RBI's Sachet portal for fraud, etc.).
+
+Guidelines:
+- Speak simply. Avoid jargon; when you must use a term like EMI, KYC, or UPI, briefly explain it in one short phrase the first time.
+- Be reassuring and non-judgmental — many callers may feel embarrassed asking "basic" questions or worried about money.
+- Never ask for or repeat back sensitive details like OTPs, PINs, passwords, or full account/card numbers. If a user shares one, tell them to never share it with anyone, including banks, and move on without repeating it.
+- Keep answers short and conversational, since this is a voice call, not a chat window.
+- If something requires an actual bank, the RBI, or a financial advisor, say so honestly and point them in the right direction rather than guessing.
+- Your responses are concise and without complex formatting, emojis, or symbols."""
 
 
 class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(instructions=SYSTEM_PROMPT)
+
+
+def build_turn_detection():
+    if not ENABLE_TURN_DETECTION:
+        logger.info("Turn detection disabled; using VAD-only mode")
+        return None
+
+    if MultilingualModel is None:
+        logger.info("Turn detection plugin not enabled; using VAD-only mode")
+        return None
+
+    try:
+        return MultilingualModel()
+    except Exception as exc:  # pragma: no cover - exercised in runtime fallback
+        logger.warning("Turn detection unavailable, falling back to VAD-only mode: %s", exc)
+        return None
 
     # To add tools, use the @function_tool decorator.
     # Here's an example that adds a simple weather tool.
@@ -77,16 +120,20 @@ async def my_agent(ctx: JobContext):
             ),
         # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
         # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
+        # Voice choice: Samar, Indian English — a steady, grounded tone fits a
+        # financial helpline better than a bright/upbeat voice would. Callers are
+        # often anxious about money or worried they've been scammed, so the voice
+        # should sound calm and trustworthy rather than energetic.
         tts=murf.TTS(
-                voice="Anisha", 
+                voice="Samar",
                 locale="en-IN",
                 style="Conversation",
                 tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
                 text_pacing=True
             ),
-        # VAD and turn detection are used to determine when the user is speaking and when the agent should respond
-        # See more at https://docs.livekit.io/agents/build/turns
-        turn_detection=MultilingualModel(),
+        # VAD and turn detection are used to determine when the user is speaking and when the agent should respond.
+        # If the turn-detector model is unavailable locally, the app falls back to VAD-only mode.
+        turn_detection=build_turn_detection(),
         vad=ctx.proc.userdata["vad"],
         # allow the LLM to generate a response while waiting for the end of turn
         # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation

@@ -33,9 +33,10 @@ export interface AppConfig {
 }
 
 export const APP_CONFIG_DEFAULTS: AppConfig = {
-  companyName: 'Murf AI',
-  pageTitle: 'Voice Agent Starter',
-  pageDescription: 'A voice agent powered by Murf Falcon — the fastest TTS API',
+  companyName: 'Vitta Mitra',
+  pageTitle: 'Vitta Mitra — Voice Financial Helpline',
+  pageDescription:
+    'A plain-language financial helpline voice agent for #VoiceForBharat, powered by Murf Falcon — the fastest TTS API',
 
   supportsChatInput: true,
   supportsVideoInput: true,
@@ -43,10 +44,10 @@ export const APP_CONFIG_DEFAULTS: AppConfig = {
   isPreConnectBufferEnabled: true,
 
   logo: '/murf-logo.svg',
-  accent: '#6366F1',
+  accent: '#0F766E',
   logoDark: '/murf-logo-dark.svg',
-  accentDark: '#818cf8',
-  startButtonText: 'Start talking',
+  accentDark: '#2DD4BF',
+  startButtonText: 'Talk to Vitta Mitra',
 
   // optional: audio visualization configuration
   // audioVisualizerType: 'bar',
