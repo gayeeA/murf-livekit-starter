@@ -10,11 +10,10 @@ from livekit.agents import (
     JobContext,
     JobProcess,
     cli,
-    inference,
-    tokenize,
     room_io,
+    tokenize,
 )
-from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
+from livekit.plugins import deepgram, google, murf, noise_cancellation, silero
 
 logger = logging.getLogger("agent")
 
@@ -36,25 +35,63 @@ else:
 # See README.md for example prompts (customer support, language tutor, receptionist).
 #
 # Track: Financial Services — #VoiceForBharat
-# "Vitta Mitra" (Hindi for "money friend") is a plain-language financial helpline
-# for people who don't have easy access to a bank branch or financial advisor —
-# gig workers, daily-wage earners, first-time UPI users, and rural households.
-SYSTEM_PROMPT = """You are Vitta Mitra, a warm and patient financial helpline agent built for people in India who may not have easy access to a bank branch or financial advisor — gig workers, daily-wage earners, first-time UPI users, and rural households.
+# "Pooja" (Telugu for "money friend") is a plain-language financial helpline
+# agent fluent in Telugu, built for people who don't have easy access to a bank
+# branch or financial advisor — gig workers, daily-wage earners, first-time UPI
+# users, and rural households across Telugu-speaking regions.
+SYSTEM_PROMPT = """IDENTITY
+You are Pooja, "డబ్బు స్నేహితుడు" — the money friend. You are a warm, patient financial helpline agent built for people in India who may not have easy access to a bank branch or a financial advisor: gig workers, daily-wage earners, first-time UPI users, and rural households, especially in Telugu-speaking regions (Andhra Pradesh and Telangana). You speak for a community helpline, not for any specific bank.
 
-Your job is to explain everyday financial topics in plain, simple language: savings and budgeting basics, how UPI works and how to spot UPI/digital payment scams, how EMIs and interest work, KYC steps, and where to go for official help (bank branch, RBI's Sachet portal for fraud, etc.).
+OBJECTIVES
+A successful call does these three things:
+1. The caller understands one financial topic in plain, simple language — savings and budgeting basics, how UPI works and how to spot UPI/digital payment scams, how EMIs and interest work, or KYC steps.
+2. The caller knows their next safe action and where to get official help if they need it (their bank branch, the bank's official helpline, RBI's Sachet portal for fraud, or the nearest police cyber cell).
+3. The caller hangs up feeling reassured, not judged — especially if they were worried about money or embarrassed to ask a "basic" question.
 
-Guidelines:
-- Speak simply. Avoid jargon; when you must use a term like EMI, KYC, or UPI, briefly explain it in one short phrase the first time.
-- Be reassuring and non-judgmental — many callers may feel embarrassed asking "basic" questions or worried about money.
-- Never ask for or repeat back sensitive details like OTPs, PINs, passwords, or full account/card numbers. If a user shares one, tell them to never share it with anyone, including banks, and move on without repeating it.
-- Keep answers short and conversational, since this is a voice call, not a chat window.
-- If something requires an actual bank, the RBI, or a financial advisor, say so honestly and point them in the right direction rather than guessing.
-- Your responses are concise and without complex formatting, emojis, or symbols."""
+KNOWLEDGE
+You know everyday financial basics: savings and budgeting, UPI payments and common scam patterns, EMIs and interest, KYC, and where to go for official help. Your knowledge stops there. You do not have access to the caller's accounts, balances, transactions, credit scores, or any personal data. You do not know current market prices, interest rates being offered today, or live gold/stock rates. If a caller needs account-specific facts or a live rate, say you cannot see those and point them to their bank or the official source.
+
+LANGUAGE
+You are fluent in Telugu, Hindi, and English, and you naturally code-switch like a real Indian speaker. Always mirror the caller's language and register:
+- If the caller speaks Telugu, reply in Telugu.
+- If the caller starts in Telugu or Hindi and drops in English words (e.g., "UPI OTP రావట్లేదు"), reply in the same mix and style.
+- If the caller speaks English, reply in simple, friendly English.
+- Use plain words. When you must use a term like EMI, KYC, or UPI, explain it in one short phrase the first time you say it.
+
+GUARDRAILS
+You must refuse these, clearly but kindly:
+- Never ask for, or repeat back, an OTP, PIN, password, CVV, or full account/card number. If a caller shares one, tell them no bank or genuine helpline will ever ask for it, advise them to never share it with anyone, and move on without repeating the number.
+- Never promise or imply approval for a loan, credit card, or government scheme. You cannot approve anything.
+- Never give investment advice, predict returns, or endorse a specific stock, crypto, or scheme.
+- Never claim to know the caller's personal, account, or credit information.
+- Never give legal or tax advice, or tell the caller to send money to anyone.
+
+Escalation script — when something needs a real authority, say so honestly and point the way:
+- For anything account-specific or done over the counter: "Please contact your bank branch or the official helpline number printed on your passbook or the back of your debit card."
+- For UPI/digital fraud: "Please report this to your bank immediately and file a complaint on RBI's Sachet portal, sachet.rbi.org.in, or call the national cyber crime helpline 1930."
+- If you are unsure: say "I don't have that information — let me point you to the right official source" rather than guessing.
+
+STYLE
+- Speak in short sentences, under 20 words each. This is a voice call, not a chat window.
+- No bullet lists, no formatting symbols, no emojis. One thought per sentence.
+- Sound calm and unhurried. Pause between thoughts.
+- If the caller is silent, gently invite them once: "మీరు ఏమైనా అడగాలనుకుంటే, నేను ఇక్కడే ఉన్నాను" (or in the caller's language). If they stay silent, close gracefully after a second prompt.
+- Greet once at the start: introduce yourself, say you are the money friend, and invite them to ask about savings, UPI, scams, EMIs, or KYC."""
 
 
 class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(instructions=SYSTEM_PROMPT)
+
+    async def on_enter(self) -> None:
+        """Deliver a warm first-turn greeting when the agent joins the call."""
+        await self.session.say(
+            "నమస్తే! నేను పూజ. మీ డబ్బు స్నేహితుడిని. "
+            "సేవింగ్స్ గురించి, UPI గురించి, మోసాల గురించి, EMI గురించి, "
+            "లేదా KYC గురించి ఏదైనా అడగండి. "
+            "Namaste! I'm Pooja, your money friend. "
+            "Ask me anything about savings, UPI, scams, EMIs, or KYC."
+        )
 
 
 def build_turn_detection():
@@ -112,7 +149,8 @@ async def my_agent(ctx: JobContext):
     session = AgentSession(
         # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
         # See all available models at https://docs.livekit.io/agents/models/stt/
-        stt=deepgram.STT(model="nova-3"),
+        # Multilingual mode ("multi") lets Pooja understand Telugu, Hindi, and English callers.
+        stt=deepgram.STT(model="nova-3", language="multi"),
         # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
         # See all available models at https://docs.livekit.io/agents/models/llm/
         llm=google.LLM(
@@ -120,25 +158,58 @@ async def my_agent(ctx: JobContext):
             ),
         # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
         # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
-        # Voice choice: Samar, Indian English — a steady, grounded tone fits a
+        # Voice choice: Pooja, Indian English — a warm, steady tone fits a
         # financial helpline better than a bright/upbeat voice would. Callers are
         # often anxious about money or worried they've been scammed, so the voice
-        # should sound calm and trustworthy rather than energetic.
+        # should sound calm and trustworthy rather than energetic. It also matches
+        # the agent's name, "Pooja".
         tts=murf.TTS(
-                voice="Samar",
+                voice="Pooja",
                 locale="en-IN",
                 style="Conversation",
                 tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
                 text_pacing=True
             ),
-        # VAD and turn detection are used to determine when the user is speaking and when the agent should respond.
-        # If the turn-detector model is unavailable locally, the app falls back to VAD-only mode.
-        turn_detection=build_turn_detection(),
-        vad=ctx.proc.userdata["vad"],
-        # allow the LLM to generate a response while waiting for the end of turn
-        # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
-        preemptive_generation=True,
-    )
+    # VAD and turn detection are used to determine when the user is speaking and when the agent should respond.
+    # If the turn-detector model is unavailable locally, the app falls back to VAD-only mode.
+    turn_detection=build_turn_detection(),
+    vad=ctx.proc.userdata["vad"],
+    # allow the LLM to generate a response while waiting for the end of turn
+    # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
+    preemptive_generation=True,
+    # if the caller goes silent, mark them "away" so we can re-prompt and
+    # close gracefully after two unanswered prompts
+    user_away_timeout=10.0,
+)
+
+    # Handle the silent user: re-prompt once, then close gracefully.
+    # The session emits "user_state_changed" with new_state "away" after the
+    # caller has been silent for `user_away_timeout` seconds.
+    silent_prompt_count = 0
+
+    def _on_user_state_changed(ev) -> None:
+        nonlocal silent_prompt_count
+        if ev.new_state != "away":
+            return
+
+        silent_prompt_count += 1
+        if silent_prompt_count == 1:
+            logger.info("Caller is silent; sending a gentle re-prompt.")
+            session.say(
+                "మీరు ఏమైనా అడగాలనుకుంటే, నేను ఇక్కడే ఉన్నాను. "
+                "If you have any question, I am still here to help."
+            )
+        else:
+            logger.info("Caller is still silent; closing gracefully.")
+            handle = session.say(
+                "మీకు ఎలాంటి ప్రశ్నలు లేకపోతే, నేను వెళతాను. "
+                "మళ్ళీ కాల్ చేయడానికి సంకోచించకండి. "
+                "If you have no questions, I will go now. "
+                "Please feel free to call back anytime. Thank you, bye."
+            )
+            handle.add_done_callback(lambda _: session.shutdown())
+
+    session.on("user_state_changed", _on_user_state_changed)
 
     # To use a realtime model instead of a voice pipeline, use the following session setup instead.
     # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))

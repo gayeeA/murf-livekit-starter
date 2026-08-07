@@ -1,4 +1,4 @@
-import { ReactNode, useEffect } from 'react';
+import { ReactNode, useEffect, useRef } from 'react';
 import { toast as sonnerToast } from 'sonner';
 import { useAgent, useSessionContext } from '@livekit/components-react';
 import { WarningIcon } from '@phosphor-icons/react';
@@ -26,40 +26,53 @@ function toastAlert(toast: ToastProps) {
 
 export function useAgentErrors() {
   const agent = useAgent();
-  const { isConnected, end } = useSessionContext();
+  const { isConnected } = useSessionContext();
+  const hasShownFailureToast = useRef(false);
 
   useEffect(() => {
-    if (isConnected && agent.state === 'failed') {
-      const reasons = agent.failureReasons;
-
-      toastAlert({
-        title: 'Session ended',
-        description: (
-          <>
-            {reasons.length > 1 && (
-              <ul className="list-inside list-disc">
-                {reasons.map((reason) => (
-                  <li key={reason}>{reason}</li>
-                ))}
-              </ul>
-            )}
-            {reasons.length === 1 && <p className="w-full">{reasons[0]}</p>}
-            <p className="w-full">
-              <a
-                target="_blank"
-                rel="noopener noreferrer"
-                href="https://docs.livekit.io/agents/start/voice-ai/"
-                className="whitespace-nowrap underline"
-              >
-                See quickstart guide
-              </a>
-              .
-            </p>
-          </>
-        ),
-      });
-
-      end();
+    if (!isConnected || agent.state !== 'failed') {
+      hasShownFailureToast.current = false;
+      return;
     }
-  }, [agent, isConnected, end]);
+
+    if (hasShownFailureToast.current) {
+      return;
+    }
+
+    hasShownFailureToast.current = true;
+
+    const reasons = Array.isArray(agent.failureReasons) ? agent.failureReasons : [];
+    const hasMultipleReasons = reasons.length > 1;
+    const hasSingleReason = reasons.length === 1;
+
+    toastAlert({
+      title: 'Agent connection issue',
+      description: (
+        <>
+          {hasMultipleReasons && (
+            <ul className="list-inside list-disc">
+              {reasons.map((reason) => (
+                <li key={reason}>{reason}</li>
+              ))}
+            </ul>
+          )}
+          {hasSingleReason && <p className="w-full">{reasons[0]}</p>}
+          {!hasMultipleReasons && !hasSingleReason && (
+            <p className="w-full">The voice agent stopped unexpectedly. Please try reconnecting.</p>
+          )}
+          <p className="w-full">
+            <a
+              target="_blank"
+              rel="noopener noreferrer"
+              href="https://docs.livekit.io/agents/start/voice-ai/"
+              className="whitespace-nowrap underline"
+            >
+              See quickstart guide
+            </a>
+            .
+          </p>
+        </>
+      ),
+    });
+  }, [agent, isConnected]);
 }

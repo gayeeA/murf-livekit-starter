@@ -33,10 +33,10 @@ export interface AppConfig {
 }
 
 export const APP_CONFIG_DEFAULTS: AppConfig = {
-  companyName: 'Vitta Mitra',
-  pageTitle: 'Vitta Mitra — Voice Financial Helpline',
+  companyName: 'Pooja',
+  pageTitle: 'Pooja — Voice Financial Helpline',
   pageDescription:
-    'A plain-language financial helpline voice agent for #VoiceForBharat, powered by Murf Falcon — the fastest TTS API',
+    'A Telugu-fluent financial helpline voice agent for #VoiceForBharat, powered by Murf Falcon — the fastest TTS API',
 
   supportsChatInput: true,
   supportsVideoInput: true,
@@ -47,7 +47,7 @@ export const APP_CONFIG_DEFAULTS: AppConfig = {
   accent: '#0F766E',
   logoDark: '/murf-logo-dark.svg',
   accentDark: '#2DD4BF',
-  startButtonText: 'Talk to Vitta Mitra',
+  startButtonText: 'Talk to Pooja',
 
   // optional: audio visualization configuration
   // audioVisualizerType: 'bar',
