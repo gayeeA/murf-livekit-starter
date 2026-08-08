@@ -43,27 +43,17 @@ export const APP_CONFIG_DEFAULTS: AppConfig = {
   supportsScreenShare: true,
   isPreConnectBufferEnabled: true,
 
-  logo: '/murf-logo.svg',
-  accent: '#0F766E',
-  logoDark: '/murf-logo-dark.svg',
-  accentDark: '#2DD4BF',
+  logo: '/pooja-logo.svg',
+  accent: '#34aeda',
+  logoDark: '/pooja-logo-dark.svg',
+  accentDark: '#5cc6ec',
   startButtonText: 'Talk to Pooja',
 
-  // optional: audio visualization configuration
-  // audioVisualizerType: 'bar',
-  // audioVisualizerColor: '#002cf2',
-  // audioVisualizerColorDark: '#1fd5f9',
-  // audioVisualizerColorShift: 0.3,
-  // audioVisualizerBarCount: 5,
-  // audioVisualizerType: 'radial',
-  // audioVisualizerRadialBarCount: 24,
-  // audioVisualizerRadialRadius: 100,
-  // audioVisualizerType: 'grid',
-  // audioVisualizerGridRowCount: 25,
-  // audioVisualizerGridColumnCount: 25,
-  // audioVisualizerType: 'wave',
-  // audioVisualizerWaveLineWidth: 3,
-  // audioVisualizerType: 'aura',
+  // audio visualization configuration — premium blue/violet bars matching the fintech theme
+  audioVisualizerType: 'bar',
+  audioVisualizerColor: '#34aeda',
+  audioVisualizerColorDark: '#5cc6ec',
+  audioVisualizerBarCount: 5,
 
   // agent dispatch configuration
   agentName: process.env.AGENT_NAME ?? undefined,

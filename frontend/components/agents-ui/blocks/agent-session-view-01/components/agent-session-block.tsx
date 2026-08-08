@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
+import { Track } from 'livekit-client';
 import { AnimatePresence, type MotionProps, motion } from 'motion/react';
 import { useAgent, useSessionContext, useSessionMessages } from '@livekit/components-react';
 import { AgentChatTranscript } from '@/components/agents-ui/agent-chat-transcript';
@@ -9,6 +10,7 @@ import {
   type AgentControlBarControls,
 } from '@/components/agents-ui/agent-control-bar';
 import { Shimmer } from '@/components/ai-elements/shimmer';
+import { AgentStatusLabel } from '@/components/app/agent-status-label';
 import { cn } from '@/lib/shadcn/utils';
 import { TileLayout } from './tile-view';
 
@@ -153,6 +155,8 @@ export interface AgentSessionView_01Props {
   audioVisualizerWaveLineWidth?: number;
   /** Optional class name merged onto the outer `<section>` container. */
   className?: string;
+  /** Called when a mic/camera/screen-share device fails to start (e.g. permission denied). */
+  onDeviceError?: (error: { source: Track.Source; error: Error }) => void;
 }
 
 export function AgentSessionView_01({
@@ -171,6 +175,7 @@ export function AgentSessionView_01({
   audioVisualizerRadialBarCount,
   audioVisualizerRadialRadius,
   audioVisualizerWaveLineWidth,
+  onDeviceError,
   ref,
   className,
   ...props
@@ -205,6 +210,12 @@ export function AgentSessionView_01({
       {...props}
     >
       <Fade top className="absolute inset-x-4 top-0 z-10 h-40" />
+
+      {/* Live agent state indicator (Listening / Speaking / Connecting) */}
+      <div className="absolute inset-x-0 top-4 z-20 flex justify-center md:top-6">
+        <AgentStatusLabel agentState={agentState} />
+      </div>
+
       {/* transcript */}
 
       <div className="absolute top-0 bottom-[135px] flex w-full flex-col md:bottom-[170px]">
@@ -266,6 +277,7 @@ export function AgentSessionView_01({
             isConnected={session.isConnected}
             onDisconnect={session.end}
             onIsChatOpenChange={setChatOpen}
+            onDeviceError={onDeviceError}
           />
         </div>
       </motion.div>
