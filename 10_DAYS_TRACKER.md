@@ -50,11 +50,41 @@ A daily log of what was changed, built, and learned while building **Pooja** —
 
 ---
 
-## Day 3+
+## Day 3 — Personalise the Frontend: Premium Fintech UI for "Pooja"
+
+**Commit:** `a4d3e98` — `day 3 : updated the UI for the user friendly`
+
+**What changed / what was added:**
+- 🎨 **New premium color palette** — cool blue/violet fintech theme (`#34aeda` primary, `#7864e3` accent) applied consistently across `globals.css` (light + dark tokens, contrast-checked), `app-config.ts` accents, and the audio visualizer bars. Added a subtle radial-gradient background wash.
+- 🪙 **New brand mark** — gradient rupee-style logo (`pooja-logo.svg` / `pooja-logo-dark.svg`) replacing the missing default LiveKit logo, used in the header and OG image.
+- 🖼️ **Rebuilt Welcome ("Ready") screen** — card layout with gradient icon badge, "Savings / Loans / Insurance / Cards" topic pills, single "Talk to Pooja" CTA, and a privacy note ("Your call is private. No financial details are stored.").
+- ⏳ **New Connecting state** (`connecting-view.tsx`) — spinner + "Connecting you to Pooja… please wait" copy; previously this state had no dedicated UI.
+- 🎧 **Live Listening/Speaking indicator** (`agent-status-label.tsx`) — a pill badge pinned above the call screen that reads "Listening to you" / "Pooja is speaking" / "Pooja is thinking…", driven by the real `useAgent()` state, alongside the existing bar visualizer.
+- 🔚 **New Call Ended screen** (`call-ended-view.tsx`) — explicit confirmation + "Talk to Pooja" restart button, instead of silently reverting to the welcome screen.
+- 🎙️ **Microphone permission handling** (`mic-permission-notice.tsx`) — clear, plain-language messages for denied / no-device / unknown mic errors, checked proactively before connecting and reactively via `onDeviceError` during the call.
+- 🔁 **New view state machine** (`view-controller.tsx`) — derives `ready / connecting / active / ended` from LiveKit's `connectionState` instead of a binary `isConnected` flag, so all five required states render distinctly.
+- 🪧 **Header polish** (`layout.tsx`) — brand pill (logo + "Pooja" + "Financial Helpline") and a "Voice powered by Murf Falcon" badge.
+- ✅ Verified with `tsc --noEmit`, `next build`, `eslint`, and a live dev-server smoke test — all clean, no console errors.
+
+**Files touched:**
+- `frontend/app-config.ts` (colors, logo paths, visualizer config)
+- `frontend/app/layout.tsx` (header)
+- `frontend/styles/globals.css` (palette + background)
+- `frontend/components/app/view-controller.tsx` (state machine)
+- `frontend/components/app/welcome-view.tsx` (Ready state)
+- `frontend/components/app/connecting-view.tsx` (new — Connecting state)
+- `frontend/components/app/call-ended-view.tsx` (new — Call Ended state)
+- `frontend/components/app/agent-status-label.tsx` (new — Listening/Speaking indicator)
+- `frontend/components/app/mic-permission-notice.tsx` (new — mic error handling)
+- `frontend/components/agents-ui/blocks/agent-session-view-01/components/agent-session-block.tsx` (wired status label + device error passthrough)
+- `frontend/public/pooja-logo.svg`, `frontend/public/pooja-logo-dark.svg` (new)
+
+---
+
+## Day 4+
 
 | Day | Date | Focus | What changed / added | Status |
 |-----|------|-------|----------------------|--------|
-| Day 3 | — | TBD | TBD | ⏳ |
 | Day 4 | — | TBD | TBD | ⏳ |
 | Day 5 | — | TBD | TBD | ⏳ |
 | Day 6 | — | TBD | TBD | ⏳ |
