@@ -81,11 +81,31 @@ A daily log of what was changed, built, and learned while building **Pooja** —
 
 ---
 
-## Day 4+
+## Day 4 — Persistent Caller Memory: "Pooja" Remembers You
+
+**Commit:** `—` — `Day 4: Added persistent caller memory (SQLite)`
+
+**What changed / what was added:**
+- 🗄️ **New storage layer** (`backend/src/memory.py`) — a small SQLite-backed persistence engine with a storage-agnostic interface (`lookup_user`, `save_user`, `forget_user`, `forget_user_by_name`, `init_db`). Data survives a full agent restart because it lives in a `memory.db` file (path overridable via `MEMORY_DB_PATH`).
+- 🛡️ **Financial Services privacy guard** — a `_sanitize()` layer strips anything sensitive (account/card numbers, full Aadhaar/PAN, OTPs, PINs, passwords, phone numbers, long numeric runs) at both key and value level, so the agent can never persist data it shouldn't. This enforces the Day-4 hard rule.
+- 🧠 **New agent tools** (in `Assistant`) — `lookup_user` (find a caller by name), `save_user_facts` (persist agreed facts), and `forget_user` (bonus: wipe a caller's record on request). The agent calls these itself; memory is read/written **through functions, not the prompt**.
+- 👋 **Returning-caller greeting flow** — `SYSTEM_PROMPT` gained a **MEMORY & PERSONALISATION** section: the agent asks for the caller's name, looks them up, greets returning callers by name ("Namaste Ramesh, last time we spoke about your savings…") and continues from last time; new callers are welcomed as normal.
+- ✅ **Consent before saving** — the prompt makes it a hard rule to ask the caller's permission before saving anything, and to drop it if they say no (mandatory for Financial Services).
+- 🎙️ **Greeting updated** — `on_enter()` now also asks for the caller's name so the lookup can happen early in the call.
+- 🧪 **New test suite** (`tests/test_memory.py`, 8 tests) — save/lookup round-trip, case-insensitive lookup, fact merging, forget by name and by id, and sensitive-data stripping (keys, values, long numbers). All pass.
+
+**Files touched:**
+- `backend/src/memory.py` (new — SQLite persistence + sanitizer)
+- `backend/src/agent.py` (imports, MEMORY prompt section, 3 function tools, greeting, `init_db()` call)
+- `backend/tests/test_memory.py` (new — 8 unit tests)
+- `10_DAYS_TRACKER.md`
+
+---
+
+## Day 5+
 
 | Day | Date | Focus | What changed / added | Status |
 |-----|------|-------|----------------------|--------|
-| Day 4 | — | TBD | TBD | ⏳ |
 | Day 5 | — | TBD | TBD | ⏳ |
 | Day 6 | — | TBD | TBD | ⏳ |
 | Day 7 | — | TBD | TBD | ⏳ |

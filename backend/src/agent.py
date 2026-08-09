@@ -9,11 +9,15 @@ from livekit.agents import (
     AgentSession,
     JobContext,
     JobProcess,
+    RunContext,
     cli,
+    function_tool,
     room_io,
     tokenize,
 )
 from livekit.plugins import deepgram, google, murf, noise_cancellation, silero
+
+from memory import forget_user_by_name, init_db, lookup_user, save_user
 
 logger = logging.getLogger("agent")
 
@@ -76,7 +80,17 @@ STYLE
 - No bullet lists, no formatting symbols, no emojis. One thought per sentence.
 - Sound calm and unhurried. Pause between thoughts.
 - If the caller is silent, gently invite them once: "మీరు ఏమైనా అడగాలనుకుంటే, నేను ఇక్కడే ఉన్నాను" (or in the caller's language). If they stay silent, close gracefully after a second prompt.
-- Greet once at the start: introduce yourself, say you are the money friend, and invite them to ask about savings, UPI, scams, EMIs, or KYC."""
+- Greet once at the start: introduce yourself, say you are the money friend, and invite them to ask about savings, UPI, scams, EMIs, or KYC.
+
+MEMORY & PERSONALISATION
+You can remember regular callers between calls so they are not treated like strangers every time. You do this ONLY through your tools, never by guessing.
+- At the start of a call, ask the caller's name (if they have not told you yet). Then call the "lookup_user" tool with that name.
+- If lookup_user returns a record, greet them by name and continue from last time. For example: "Namaste Ramesh, nice to see you again. Last time we talked about your savings plan. Did you manage to set aside some money?" Refer to what you know (their facts) and ask a follow-up about it.
+- If lookup_user finds nothing, treat them as a new caller and continue normally.
+- You may learn new facts about the caller during the conversation (for example, which government savings schemes they are already checking, or their eligibility answers). To save them, call the "save_user_facts" tool with the caller's name and the facts.
+- CONSENT IS MANDATORY (Financial Services hard rule): Before you save anything, tell the caller you would like to remember this for next time, and ask their permission. If they say no, DO NOT call save_user_facts. If they stay silent or are unsure, do not save. Only save the facts they actually agree to.
+- Only save safe, non-sensitive facts: which schemes they have checked, their general eligibility answers, their preferred topics, their language. NEVER save account numbers, card numbers, full Aadhaar/PAN numbers, OTPs, PINs, passwords, phone numbers, balances, or any identifier. Never store written-out medical or financial account details.
+- If the caller asks you to forget them, call the "forget_user" tool with their name, confirm their record is deleted, and reassure them."""
 
 
 class Assistant(Agent):
@@ -84,14 +98,77 @@ class Assistant(Agent):
         super().__init__(instructions=SYSTEM_PROMPT)
 
     async def on_enter(self) -> None:
-        """Deliver a warm first-turn greeting when the agent joins the call."""
+        """Deliver a warm first-turn greeting and ask for the caller's name."""
         await self.session.say(
-            "నమస్తే! నేను పూజ. మీ డబ్బు స్నేహితుడిని. "
-            "సేవింగ్స్ గురించి, UPI గురించి, మోసాల గురించి, EMI గురించి, "
-            "లేదా KYC గురించి ఏదైనా అడగండి. "
+            "నమస్తే! నేను పూజ, మీ డబ్బు స్నేహితురాలు. "
+            "ముందుగా, మీ పేరు చెప్పగలరా? మిమ్మల్ని బాగా తెలుసుకోవాలని ఉంది. "
             "Namaste! I'm Pooja, your money friend. "
-            "Ask me anything about savings, UPI, scams, EMIs, or KYC."
+            "First, could you tell me your name? "
+            "I would love to know you a little better."
         )
+
+    @function_tool
+    async def lookup_user(self, context: RunContext, name: str) -> str:
+        """Look up a caller's saved record by name so you can greet a returning
+        caller by name and continue from last time.
+
+        Use this at the start of a call once you know the caller's name. If the
+        caller has no record, the result will be empty and you should treat them
+        as a new caller.
+
+        Args:
+            name: The caller's name (as they told you).
+        """
+        logger.info("Looking up user by name: %s", name)
+        record = lookup_user(name)
+        if record is None:
+            return "NO_RECORD_FOUND"
+        # Never surface sensitive-looking fields even if they slipped through.
+        return {
+            "user_id": record.get("user_id"),
+            "name": record.get("name"),
+            "facts": record.get("facts", {}),
+            "last_interaction": record.get("last_interaction"),
+        }
+
+    @function_tool
+    async def save_user_facts(
+        self, context: RunContext, name: str, facts: dict
+    ) -> str:
+        """Save or update a caller's facts so you can remember them next time.
+
+        ONLY call this after the caller has explicitly agreed that you may save.
+        Only safe, non-sensitive facts may be saved (e.g. which schemes they have
+        checked, general eligibility answers, preferred topics, language). Never
+        save account/card numbers, Aadhaar/PAN, OTPs, PINs, passwords, phone
+        numbers, or balances.
+
+        Args:
+            name: The caller's name.
+            facts: A dictionary of key/value facts the caller agreed to save.
+        """
+        logger.info("Saving facts for user: %s -> %s", name, facts)
+        record = save_user(name=name, facts=facts)
+        return {
+            "user_id": record["user_id"],
+            "name": record["name"],
+            "facts": record["facts"],
+            "last_interaction": record["last_interaction"],
+        }
+
+    @function_tool
+    async def forget_user(self, context: RunContext, name: str) -> str:
+        """Permanently delete a caller's saved record.
+
+        Use this when the caller asks you to forget them. Confirm the deletion
+        to the caller afterwards.
+
+        Args:
+            name: The caller's name whose record should be deleted.
+        """
+        logger.info("Forgetting user: %s", name)
+        removed = forget_user_by_name(name)
+        return "DELETED" if removed else "NO_RECORD_FOUND"
 
 
 def build_turn_detection():
@@ -108,23 +185,6 @@ def build_turn_detection():
     except Exception as exc:  # pragma: no cover - exercised in runtime fallback
         logger.warning("Turn detection unavailable, falling back to VAD-only mode: %s", exc)
         return None
-
-    # To add tools, use the @function_tool decorator.
-    # Here's an example that adds a simple weather tool.
-    # You also have to add `from livekit.agents import function_tool, RunContext` to the top of this file
-    # @function_tool
-    # async def lookup_weather(self, context: RunContext, location: str):
-    #     """Use this tool to look up current weather information in the given location.
-    #
-    #     If the location is not supported by the weather service, the tool will indicate this. You must tell the user the location's weather is unavailable.
-    #
-    #     Args:
-    #         location: The location to look up weather information for (e.g. city name)
-    #     """
-    #
-    #     logger.info(f"Looking up weather for {location}")
-    #
-    #     return "sunny with a temperature of 70 degrees."
 
 
 server = AgentServer()
@@ -144,6 +204,9 @@ async def my_agent(ctx: JobContext):
     ctx.log_context_fields = {
         "room": ctx.room.name,
     }
+
+    # Ensure the SQLite memory database is ready before the session starts.
+    init_db()
 
     # Set up a voice AI pipeline using Murf Falcon, Gemini, Deepgram, and the LiveKit turn detector
     session = AgentSession(
