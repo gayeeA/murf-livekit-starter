@@ -176,6 +176,19 @@ Default is Google Gemini. To switch:
 - **Gemini (default):** Set `GOOGLE_API_KEY` in `.env.local`
 - **OpenAI:** Set `OPENAI_API_KEY`, install `livekit-agents[openai]`, and change the `llm=` argument
 
+## Tools — government scheme lookup (Day 5)
+
+Pooja can look up common government financial-inclusion schemes (Jan Dhan bank accounts, PMSBY/PMJJBY insurance, Atal Pension Yojana, Sukanya Samriddhi Yojana, PM Vishwakarma, Stand-Up India, Mudra loans) via two `function_tool`s in [`src/agent.py`](src/agent.py):
+
+- `check_scheme_eligibility(age, occupation, annual_income, gender, has_bank_account)` — checks the caller's answers against each scheme's rules and returns likely-eligible schemes plus near-misses.
+- `get_scheme_documents(scheme_name)` — returns the document checklist for a named scheme.
+
+**Data source: this is a local, hand-built dataset, not a live API.** There is no free, machine-readable eligibility API for these government schemes — the authoritative sources are static pages/PDFs published by the Department of Financial Services, PFRDA, and NSI (linked in [`src/schemes.py`](src/schemes.py)). The eligibility rules were curated by hand from those official sources and are marked with an `data_as_of` date (`schemes.DATA_AS_OF`). The agent always states that date when reading out results and tells the caller to confirm final details at their bank branch, since scheme terms do change over time.
+
+**Failure handling:** both tools wrap the lookup in a `try/except` and return `"LOOKUP_FAILED"` (or `"SCHEME_NOT_FOUND"` for an unknown scheme name) instead of raising. The `SYSTEM_PROMPT`'s GOVERNMENT SCHEME LOOKUP section instructs the agent to say so plainly to the caller and suggest trying again or contacting their bank — never to invent scheme names, amounts, or rules.
+
+Unit tests for the eligibility logic and document lookup live in [`tests/test_schemes.py`](tests/test_schemes.py).
+
 ## Testing
 
 The project includes an eval suite based on the LiveKit Agents [testing framework](https://docs.livekit.io/agents/build/testing/):
@@ -215,9 +228,13 @@ docker run --env-file .env.local murf-voice-agent
 ```
 backend/
 ├── src/
-│   └── agent.py          # Agent entrypoint — pipeline, prompt, config
+│   ├── agent.py          # Agent entrypoint — pipeline, prompt, config, tools
+│   ├── memory.py          # SQLite-backed caller memory (Day 4)
+│   └── schemes.py         # Local government-scheme dataset + lookup (Day 5)
 ├── tests/
-│   └── test_agent.py     # LLM-judged eval suite
+│   ├── test_agent.py     # LLM-judged eval suite
+│   ├── test_memory.py    # Caller memory unit tests
+│   └── test_schemes.py   # Scheme eligibility/document unit tests
 ├── .env.example           # Environment variable template
 ├── pyproject.toml         # Python dependencies (uv)
 ├── Dockerfile             # Production container

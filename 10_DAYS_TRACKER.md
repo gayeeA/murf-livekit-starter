@@ -102,11 +102,30 @@ A daily log of what was changed, built, and learned while building **Pooja** —
 
 ---
 
-## Day 5+
+## Day 5 — Scheme Eligibility Tool: "Pooja" Learns to Look Things Up
+
+**Commit:** `—` — `Day 5: Added government scheme eligibility + document checklist tool`
+
+**What changed / what was added:**
+- 🗂️ **New local dataset** (`backend/src/schemes.py`) — hand-curated eligibility rules and document checklists for 8 common government financial-inclusion schemes (Jan Dhan bank accounts, PMSBY, PMJJBY, Atal Pension Yojana, Sukanya Samriddhi Yojana, PM Vishwakarma, Stand-Up India, Mudra loans), compiled from official DFS/PFRDA/NSI sources and stamped with a `DATA_AS_OF` date. **This is local data, not a live API** — no free machine-readable eligibility API exists for these schemes; the README says so explicitly.
+- 🧠 **Two new agent tools** — `check_scheme_eligibility` (matches age/occupation/income/gender/bank-account answers against scheme rules, returns eligible + "close but not eligible" schemes) and `get_scheme_documents` (document checklist by scheme name, fuzzy-matched).
+- 📜 **New GOVERNMENT SCHEME LOOKUP prompt section** — tells the agent to gather only what's needed conversationally (not interrogate), speak results as a short natural list (not a data dump), always mention the data's as-of date, and point callers to their bank branch to confirm.
+- 🛑 **Graceful failure path** — both tools catch exceptions and return `"LOOKUP_FAILED"`/`"SCHEME_NOT_FOUND"` instead of raising; the prompt instructs the agent to say so plainly and suggest retrying or contacting the bank, never to invent scheme details.
+- 🧪 **New test suite** (`tests/test_schemes.py`, 9 tests) — eligibility matching (bank-account-required, age windows, gender-gated, occupation-gated schemes), unspecified answers being skipped rather than failed, and document lookup by partial name/id/unknown scheme. All pass.
+
+**Files touched:**
+- `backend/src/schemes.py` (new — local scheme dataset + eligibility/document lookup)
+- `backend/src/agent.py` (import, GOVERNMENT SCHEME LOOKUP prompt section, 2 function tools)
+- `backend/tests/test_schemes.py` (new — 9 unit tests)
+- `backend/README.md` (Tools section documenting the dataset and its data-freshness)
+- `10_DAYS_TRACKER.md`
+
+---
+
+## Day 6+
 
 | Day | Date | Focus | What changed / added | Status |
 |-----|------|-------|----------------------|--------|
-| Day 5 | — | TBD | TBD | ⏳ |
 | Day 6 | — | TBD | TBD | ⏳ |
 | Day 7 | — | TBD | TBD | ⏳ |
 | Day 8 | — | TBD | TBD | ⏳ |

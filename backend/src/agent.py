@@ -18,6 +18,7 @@ from livekit.agents import (
 from livekit.plugins import deepgram, google, murf, noise_cancellation, silero
 
 from memory import forget_user_by_name, init_db, lookup_user, save_user
+from schemes import check_eligibility, get_documents
 
 logger = logging.getLogger("agent")
 
@@ -54,6 +55,13 @@ A successful call does these three things:
 
 KNOWLEDGE
 You know everyday financial basics: savings and budgeting, UPI payments and common scam patterns, EMIs and interest, KYC, and where to go for official help. Your knowledge stops there. You do not have access to the caller's accounts, balances, transactions, credit scores, or any personal data. You do not know current market prices, interest rates being offered today, or live gold/stock rates. If a caller needs account-specific facts or a live rate, say you cannot see those and point them to their bank or the official source.
+
+GOVERNMENT SCHEME LOOKUP (tools, not memory)
+You have a small local reference dataset of common government financial-inclusion schemes (Jan Dhan bank accounts, PMSBY/PMJJBY insurance, Atal Pension Yojana, Sukanya Samriddhi Yojana, PM Vishwakarma, Stand-Up India, Mudra loans). Never guess scheme rules from general knowledge.
+- If a caller asks "what schemes am I eligible for" or wants help with a savings/insurance/pension/loan scheme, gather what you need conversationally (their age, roughly whether they have a bank account already, occupation if relevant, gender if relevant to a scheme like Sukanya Samriddhi) and call "check_scheme_eligibility". Only ask for what's needed for the schemes the caller cares about — do not interrogate them with every field up front.
+- Speak the results as a short spoken list, not a data dump: name the top 1-3 matching schemes in plain language, what each is for, and only go deeper if the caller asks. Always mention the data's as-of date once, briefly (e.g. "as of my last update in April") and tell them to confirm final details at their bank branch, since scheme rules can change.
+- If the caller wants to know what papers to carry, call "get_scheme_documents" with the scheme name and read the checklist out as a short spoken list.
+- If either tool comes back with a lookup-failed result, say so plainly — for example "I'm having trouble reaching my scheme information right now, let's try that again in a moment, or you can check with your bank branch" — never invent scheme names, amounts, or eligibility rules yourself.
 
 LANGUAGE
 You are fluent in Telugu, Hindi, and English, and you naturally code-switch like a real Indian speaker. Always mirror the caller's language and register:
@@ -169,6 +177,77 @@ class Assistant(Agent):
         logger.info("Forgetting user: %s", name)
         removed = forget_user_by_name(name)
         return "DELETED" if removed else "NO_RECORD_FOUND"
+
+    @function_tool
+    async def check_scheme_eligibility(
+        self,
+        context: RunContext,
+        age: int | None = None,
+        occupation: str | None = None,
+        annual_income: int | None = None,
+        gender: str | None = None,
+        has_bank_account: bool | None = None,
+    ) -> str | dict:
+        """Check which government financial-inclusion schemes the caller is
+        likely eligible for, based on answers collected so far in the call.
+
+        Call this whenever the caller asks what schemes they qualify for, or
+        asks about a specific kind of scheme (a bank account, insurance,
+        pension, a girl child savings account, or a business loan). Pass only
+        the fields the caller has actually told you; leave the rest as None
+        rather than guessing.
+
+        Args:
+            age: Caller's age in years, if known.
+            occupation: Caller's occupation in a few words (e.g. "tailor",
+                "shopkeeper", "daily wage laborer"), if relevant and known.
+            annual_income: Caller's rough annual household income in rupees,
+                if they've shared it.
+            gender: Caller's gender, if relevant to the schemes being asked
+                about (e.g. Sukanya Samriddhi Yojana is for a girl child).
+            has_bank_account: Whether the caller already has a savings bank
+                account, if known.
+        """
+        logger.info(
+            "Checking scheme eligibility: age=%s occupation=%s income=%s gender=%s bank=%s",
+            age, occupation, annual_income, gender, has_bank_account,
+        )
+        try:
+            result = check_eligibility(
+                age=age,
+                occupation=occupation,
+                annual_income=annual_income,
+                gender=gender,
+                has_bank_account=has_bank_account,
+            )
+        except Exception:
+            logger.exception("Scheme eligibility lookup failed")
+            return "LOOKUP_FAILED"
+        return result
+
+    @function_tool
+    async def get_scheme_documents(self, context: RunContext, scheme_name: str) -> str | dict:
+        """Get the document checklist a caller needs to apply for a named
+        government scheme.
+
+        Call this after a scheme has come up in the conversation (either the
+        caller named it, or it was one of the results from
+        "check_scheme_eligibility") and the caller asks what papers or
+        documents they need.
+
+        Args:
+            scheme_name: The scheme's name as discussed (e.g. "Jan Dhan",
+                "Sukanya Samriddhi", "Mudra loan").
+        """
+        logger.info("Looking up documents for scheme: %s", scheme_name)
+        try:
+            result = get_documents(scheme_name)
+        except Exception:
+            logger.exception("Scheme document lookup failed")
+            return "LOOKUP_FAILED"
+        if result is None:
+            return "SCHEME_NOT_FOUND"
+        return result
 
 
 def build_turn_detection():
