@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 
@@ -17,7 +18,7 @@ from livekit.agents import (
 )
 from livekit.plugins import deepgram, google, murf, noise_cancellation, silero
 
-from memory import forget_user_by_name, init_db, lookup_user, save_user
+from memory import add_do_not_call, forget_user_by_name, init_db, lookup_user, save_user
 from schemes import check_eligibility, get_documents
 
 logger = logging.getLogger("agent")
@@ -100,13 +101,77 @@ You can remember regular callers between calls so they are not treated like stra
 - Only save safe, non-sensitive facts: which schemes they have checked, their general eligibility answers, their preferred topics, their language. NEVER save account numbers, card numbers, full Aadhaar/PAN numbers, OTPs, PINs, passwords, phone numbers, balances, or any identifier. Never store written-out medical or financial account details.
 - If the caller asks you to forget them, call the "forget_user" tool with their name, confirm their record is deleted, and reassure them."""
 
+# Day 6: outbound reminder calls ("scheme deadline approaching for someone
+# already found eligible" — the Financial Services track's outbound trigger).
+# Outbound is harder than inbound: the person didn't ask for this call and
+# doesn't know who's calling, so the opening must say who/why/how-to-stop
+# before anything else, and any opt-out request must be honored immediately.
+OUTBOUND_PROMPT_ADDENDUM = """
+
+OUTBOUND REMINDER CALL
+This specific call is an OUTBOUND reminder call that Pooja placed, not one
+the person asked for. They did not choose to call in, so:
+- Your first turn already states who is calling, why, and how to make it
+  stop — that greeting is handled for you; do not repeat it, just continue
+  naturally from it.
+- Keep it short and let them opt out easily. If the caller says anything
+  like "stop calling me", "don't call again", "remove my number", or
+  otherwise asks not to be called again, immediately call the
+  "opt_out_of_calls" tool, apologise once, and end the call politely. Do not
+  argue, do not ask again, do not try to finish the pitch first.
+- If it's a bad time, offer to keep it to one sentence or end the call;
+  never insist on continuing.
+- Otherwise, deliver the reminder about the scheme and its deadline in plain
+  language, answer questions using your normal tools (scheme eligibility,
+  documents), and only offer to note their interest down with their
+  explicit consent, per the MEMORY & PERSONALISATION rules above."""
+
+
+def build_outbound_opening(name: str | None, scheme_name: str, deadline: str) -> str:
+    """Build the mandatory first-turn opening for an outbound reminder call.
+
+    Outbound calls must state identity, reason, and an opt-out path in the
+    first two sentences — the person on the other end didn't ask for this
+    call and doesn't know who's calling.
+    """
+    who = f", {name}" if name else ""
+    return (
+        f"నమస్తే{who}! ఇది పూజ, మీ డబ్బు స్నేహితురాలి ఆటోమేటెడ్ కాల్. "
+        "మీరు ఎప్పుడైనా 'కాల్ చేయవద్దు' అని చెబితే ఈ కాల్‌లు ఆగిపోతాయి. "
+        f"Hi{who}, this is Pooja, an automated call from your money-friend "
+        f"financial helpline. I'm calling because you were found eligible "
+        f"for {scheme_name}, and I wanted to remind you before the "
+        f"{deadline} deadline. Just say 'stop calling' any time and I will "
+        "not call again. Do you have a minute?"
+    )
+
 
 class Assistant(Agent):
-    def __init__(self) -> None:
-        super().__init__(instructions=SYSTEM_PROMPT)
+    def __init__(self, outbound_context: dict | None = None) -> None:
+        instructions = SYSTEM_PROMPT
+        if outbound_context:
+            instructions += OUTBOUND_PROMPT_ADDENDUM
+        super().__init__(instructions=instructions)
+        self._outbound_context = outbound_context
 
     async def on_enter(self) -> None:
-        """Deliver a warm first-turn greeting and ask for the caller's name."""
+        """Deliver the first-turn greeting.
+
+        Inbound calls get the normal warm welcome. Outbound reminder calls
+        (Day 6) get the opt-in/opt-out-aware opening instead, since the
+        person on this end didn't ask for the call.
+        """
+        if self._outbound_context:
+            ctx = self._outbound_context
+            await self.session.say(
+                build_outbound_opening(
+                    name=ctx.get("name"),
+                    scheme_name=ctx.get("scheme_name", "a government scheme"),
+                    deadline=ctx.get("deadline", "soon"),
+                )
+            )
+            return
+
         await self.session.say(
             "నమస్తే! నేను పూజ, మీ డబ్బు స్నేహితురాలు. "
             "ముందుగా, మీ పేరు చెప్పగలరా? మిమ్మల్ని బాగా తెలుసుకోవాలని ఉంది. "
@@ -114,6 +179,22 @@ class Assistant(Agent):
             "First, could you tell me your name? "
             "I would love to know you a little better."
         )
+
+    @function_tool
+    async def opt_out_of_calls(self, context: RunContext) -> str:
+        """Permanently stop future outbound calls to this caller's number.
+
+        Call this the moment the caller asks to not be called again (e.g.
+        "stop calling me", "remove my number", "don't call again"). Only
+        meaningful on outbound calls — there is no number to opt out on an
+        inbound call the person placed themselves.
+        """
+        phone_number = (self._outbound_context or {}).get("phone_number")
+        if not phone_number:
+            return "NOT_AN_OUTBOUND_CALL"
+        logger.info("Caller opted out of future outbound calls: %s", phone_number)
+        add_do_not_call(phone_number)
+        return "OPTED_OUT"
 
     @function_tool
     async def lookup_user(self, context: RunContext, name: str) -> str:
@@ -250,6 +331,24 @@ class Assistant(Agent):
         return result
 
 
+def _parse_outbound_metadata(raw_metadata: str) -> dict | None:
+    """Parse job metadata set by outbound_caller.py into an outbound context.
+
+    Returns None for inbound calls (no metadata, or metadata that isn't an
+    outbound-reminder payload) so the agent falls back to its normal
+    inbound greeting.
+    """
+    if not raw_metadata:
+        return None
+    try:
+        data = json.loads(raw_metadata)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(data, dict) or data.get("call_type") != "outbound_reminder":
+        return None
+    return data
+
+
 def build_turn_detection():
     if not ENABLE_TURN_DETECTION:
         logger.info("Turn detection disabled; using VAD-only mode")
@@ -286,6 +385,11 @@ async def my_agent(ctx: JobContext):
 
     # Ensure the SQLite memory database is ready before the session starts.
     init_db()
+
+    # Day 6: outbound calls carry their context (caller name, scheme,
+    # deadline, phone number) as job metadata, set by outbound_caller.py at
+    # dispatch time. Inbound calls have no metadata, so this is None.
+    outbound_context = _parse_outbound_metadata(ctx.job.metadata)
 
     # Set up a voice AI pipeline using Murf Falcon, Gemini, Deepgram, and the LiveKit turn detector
     session = AgentSession(
@@ -373,7 +477,7 @@ async def my_agent(ctx: JobContext):
 
     # Start the session, which initializes the voice pipeline and warms up the models
     await session.start(
-        agent=Assistant(),
+        agent=Assistant(outbound_context=outbound_context),
         room=ctx.room,
         room_options=room_io.RoomOptions(
             audio_input=room_io.AudioInputOptions(

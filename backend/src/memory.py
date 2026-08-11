@@ -102,7 +102,7 @@ def _connect() -> Any:
 
 
 def init_db() -> None:
-    """Create the users table if it does not exist."""
+    """Create the users and do-not-call tables if they do not exist."""
     with _lock:
         conn = _connect()
         try:
@@ -116,10 +116,56 @@ def init_db() -> None:
                 )
                 """
             )
+            # Outbound-call opt-out registry (Day 6). Kept separate from
+            # `users.facts` because a phone number is exactly the kind of
+            # identifier `_sanitize()` refuses to store as a caller "fact" —
+            # this table exists purely so we stop dialing a number, not to
+            # remember anything about the person.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS do_not_call (
+                    phone_number TEXT PRIMARY KEY,
+                    created_at   TEXT NOT NULL
+                )
+                """
+            )
             conn.commit()
         finally:
             conn.close()
     logger.info("Memory database ready at %s", _DB_PATH)
+
+
+def add_do_not_call(phone_number: str) -> None:
+    """Record that this phone number must never be called again."""
+    if not phone_number:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    with _lock:
+        conn = _connect()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO do_not_call (phone_number, created_at) VALUES (?, ?)",
+                (phone_number, now),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    logger.info("Added %s to the do-not-call list", phone_number)
+
+
+def is_do_not_call(phone_number: str) -> bool:
+    """Check whether this phone number has opted out of outbound calls."""
+    if not phone_number:
+        return False
+    with _lock:
+        conn = _connect()
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM do_not_call WHERE phone_number = ?", (phone_number,)
+            ).fetchone()
+        finally:
+            conn.close()
+    return row is not None
 
 
 def _row_to_user(row: Any) -> dict[str, Any] | None:

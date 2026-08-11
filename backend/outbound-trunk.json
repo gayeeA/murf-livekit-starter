@@ -1,0 +1,9 @@
+{
+  "trunk": {
+    "name": "pooja-outbound",
+    "address": "pooja-outbound.pstn.twilio.com",
+    "numbers": ["+17372212163"],
+    "auth_username": "pooja-agent",
+    "auth_password": "PickAStrongPassword123!"
+  }
+}

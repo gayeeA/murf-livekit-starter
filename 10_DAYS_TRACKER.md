@@ -122,11 +122,45 @@ A daily log of what was changed, built, and learned while building **Pooja** —
 
 ---
 
-## Day 6+
+## Day 6 — Outbound Calls: "Pooja" Reminds Eligible Callers of Scheme Deadlines
+
+**Commit:** `—` — `Day 6: Added outbound scheme-deadline reminder calls via LiveKit SIP`
+
+**What changed / what was added:**
+- 📞 **Outbound use case (Financial Services track)** — "scheme deadline approaching for someone already found eligible." Builds directly on Day 5's local scheme dataset: Pooja now calls people who were previously checked as eligible, before their scheme's enrollment window closes.
+- 🗂️ **New CLI dialer** (`backend/src/outbound_caller.py`) — dispatches the `my-agent` job into a fresh LiveKit room with call context (name, scheme, deadline, phone) as job metadata, then dials the number into that room via a LiveKit SIP **outbound trunk** backed by Twilio (or Linphone as a free fallback).
+- 👋 **Outbound-aware opening** — `agent.py` reads the job metadata (`_parse_outbound_metadata`) and, when present, has `on_enter()` say `build_outbound_opening()` instead of the inbound greeting: states **who's calling (Pooja), why (scheme deadline reminder), and how to opt out — within the first two sentences**, per the Day-6 hard rule that outbound calls need this up front.
+- 🚫 **Opt-out handling** — a new `opt_out_of_calls` tool adds the caller's number to a `do_not_call` SQLite table (`memory.add_do_not_call` / `memory.is_do_not_call`), kept separate from caller "facts" so a raw phone number is never treated as persisted personal data. `outbound_caller.py` checks this table before dialing and skips anyone who opted out. The `OUTBOUND_PROMPT_ADDENDUM` instructs the agent to call this tool immediately on any "stop calling me" request, no arguing or re-pitching.
+- 🔁 **Outcome handling (advanced)** — `outbound_caller.py` classifies a failed dial into `no_answer` / `busy` / `voicemail` / `error` from the SIP failure message, and retries once after a 45s delay for `no_answer`/`busy`; hard errors are not retried.
+- 🧪 **New test suite** (`tests/test_outbound.py`, 12 tests) — opening framing (who/why/opt-out present), metadata parsing (valid + malformed/non-outbound payloads rejected), scheme name resolution, and outcome classification. Plus 2 new tests in `tests/test_memory.py` for the do-not-call registry.
+- 📖 **README** — new "Outbound calling — scheme deadline reminders (Day 6)" section documenting the Twilio + LiveKit SIP outbound trunk setup and how to place a call.
+
+**Real-world telephony setup saga (the actual Day 6 grind):**
+- Twilio trial account hit a hard wall — **Elastic SIP Trunking is not available on trial accounts at all** (`Error 20003`), via Console or the Twilio CLI. No workaround; requires a paid top-up.
+- Tried **Linphone's free SIP service** (`sip.linphone.org`) as a zero-cost alternative instead of upgrading Twilio: free account, LiveKit outbound trunk pointed at `sip.linphone.org`, dialing the Linphone username as the "phone number."
+- Hit and fixed two real bugs along the way (now fixed in `outbound_caller.py`):
+  - `ringing_timeout` / `max_call_duration` are protobuf `Duration` fields — passing plain ints crashed with `AttributeError: 'int' object has no attribute 'seconds'`. Fixed with `datetime.timedelta(seconds=...)`.
+  - `lk sip outbound update --codecs` uses `<name>` or `<name>/<sample-rate>` (e.g. `opus/48000`), not the SDP-style `opus/48000/2` — `lk` rejected the latter outright.
+- Still unresolved as of today: the actual call attempt fails with **`488 Not Acceptable Here`**, even after widening codecs and disabling forced encryption. Likely cause: `sip.linphone.org` doesn't treat LiveKit's SIP trunk as a legitimate peer the way it treats registered Linphone app users — this needs a real SIP trace to confirm, which wasn't available today. Full troubleshooting log (setup steps, every error hit, what was tried, what's next) is in [`backend/DAY6_LINPHONE_NOTES.md`](backend/DAY6_LINPHONE_NOTES.md).
+- Fallback if Linphone stays unresolved: switch `SIP_OUTBOUND_TRUNK_ID` to a real paid trunk (Twilio top-up, or a cheaper provider like Telnyx/Plivo) — no code changes needed either way, since `outbound_caller.py`/`agent.py` are provider-agnostic.
+
+**Files touched:**
+- `backend/src/outbound_caller.py` (new — CLI dialer; later fixed the `timedelta` bug)
+- `backend/src/agent.py` (outbound metadata parsing, opening builder, opt-out tool, `OUTBOUND_PROMPT_ADDENDUM`)
+- `backend/src/memory.py` (do-not-call registry)
+- `backend/tests/test_outbound.py` (new — 12 unit tests)
+- `backend/tests/test_memory.py` (+2 tests)
+- `backend/.env.example` (`SIP_OUTBOUND_TRUNK_ID`)
+- `backend/README.md` (Day 6 setup section + Twilio-trial-blocker warning + Linphone pointer)
+- `backend/DAY6_LINPHONE_NOTES.md` (new — Linphone free-SIP troubleshooting log)
+- `10_DAYS_TRACKER.md`
+
+---
+
+## Day 7+
 
 | Day | Date | Focus | What changed / added | Status |
 |-----|------|-------|----------------------|--------|
-| Day 6 | — | TBD | TBD | ⏳ |
 | Day 7 | — | TBD | TBD | ⏳ |
 | Day 8 | — | TBD | TBD | ⏳ |
 | Day 9 | — | TBD | TBD | ⏳ |

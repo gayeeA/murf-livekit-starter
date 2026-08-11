@@ -88,3 +88,17 @@ def test_long_numeric_value_is_dropped(db):
     db.save_user(name="Ramesh", facts={"phone_like": 9876543210, "age": 30})
     record = db.lookup_user("Ramesh")
     assert record["facts"] == {"age": 30}
+
+
+def test_do_not_call_roundtrip(db):
+    assert db.is_do_not_call("+919876543210") is False
+    db.add_do_not_call("+919876543210")
+    assert db.is_do_not_call("+919876543210") is True
+    # Unrelated numbers are unaffected.
+    assert db.is_do_not_call("+911234567890") is False
+
+
+def test_do_not_call_is_idempotent(db):
+    db.add_do_not_call("+919876543210")
+    db.add_do_not_call("+919876543210")
+    assert db.is_do_not_call("+919876543210") is True

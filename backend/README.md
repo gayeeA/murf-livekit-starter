@@ -189,6 +189,43 @@ Pooja can look up common government financial-inclusion schemes (Jan Dhan bank a
 
 Unit tests for the eligibility logic and document lookup live in [`tests/test_schemes.py`](tests/test_schemes.py).
 
+## Outbound calling — scheme deadline reminders (Day 6)
+
+Day 5 gave Pooja a tool to check scheme eligibility *when someone calls in*. Day 6 flips that: Pooja now *places* a call to remind someone who was **already found eligible** that a scheme's enrollment window is closing soon — the Financial Services track's outbound trigger.
+
+### How it's wired
+
+- [`src/outbound_caller.py`](src/outbound_caller.py) is a standalone CLI script — it dispatches the `my-agent` job into a fresh LiveKit room with the call's context (name, scheme, deadline, phone number) as job metadata, then dials the phone number into that room via a LiveKit SIP **outbound trunk**.
+- `agent.py` reads that metadata (`_parse_outbound_metadata`) and, if present, has `Assistant.on_enter()` open with `build_outbound_opening()` instead of the normal inbound greeting. That opening states **who's calling, why, and how to opt out — in the first two sentences** (a hard requirement for outbound: the person didn't ask for this call and doesn't know who's calling).
+- If the caller says anything like "stop calling me" during the call, the agent calls the `opt_out_of_calls` tool, which adds their number to a `do_not_call` table in the SQLite memory DB (`memory.add_do_not_call` / `memory.is_do_not_call`). `outbound_caller.py` checks that table before dialing and skips anyone on it.
+- **Outcome handling (advanced):** `outbound_caller.py` classifies a failed dial (`no_answer` / `busy` / `voicemail` / `error`) from the SIP error LiveKit returns, and retries once after a short delay for `no_answer`/`busy` — a hard rejection or error is not retried.
+
+### Setup: Twilio + LiveKit SIP outbound trunk
+
+> ⚠️ **Twilio trial accounts cannot create Elastic SIP Trunks at all.** Trying to (via Console or the Twilio CLI) fails immediately with `Error 20003: This feature is not available on a Trial account`. There's no free-tier workaround on Twilio's side — you need to add a small balance to unlock it.
+
+1. Buy a phone number in your [Twilio Console](https://console.twilio.com/) (or reuse your free trial number) and create an **Elastic SIP Trunk** pointed at your LiveKit project's SIP URI (Settings → SIP in [LiveKit Cloud](https://cloud.livekit.io/)). Twilio's [LiveKit SIP trunking guide](https://docs.livekit.io/sip/quickstarts/configuring-twilio-trunk/) walks through this end to end. The [Twilio CLI](https://www.twilio.com/docs/twilio-cli/quickstart) trunking plugin (`twilio plugins:install @twilio-labs/plugin-trunking`) is more reliable than hunting through the Console UI for this.
+2. Create a LiveKit **outbound trunk** referencing your Twilio number/credentials, with the [LiveKit CLI](https://docs.livekit.io/sip/trunk-outbound/):
+   ```bash
+   lk sip outbound create outbound-trunk.json
+   ```
+3. Copy the returned trunk ID into `SIP_OUTBOUND_TRUNK_ID` in `.env.local`.
+4. **Free alternative:** [Linphone](https://www.linphone.org/)'s free SIP service (`sip.linphone.org`) was tried as a no-cost substitute for Twilio — see [`DAY6_LINPHONE_NOTES.md`](DAY6_LINPHONE_NOTES.md) for the full setup, the bugs hit and fixed along the way (a `timedelta` vs. plain-int protobuf issue, `lk` CLI codec string format), and the unresolved `488 Not Acceptable Here` SIP error this path currently ends on. Treat it as experimental, not a drop-in Twilio replacement.
+
+### Placing a call
+
+With the agent worker running (`uv run python src/agent.py dev`) in one terminal:
+
+```bash
+uv run python src/outbound_caller.py \
+  --name "Ramesh" --phone "+919876543210" \
+  --scheme pmjdy --deadline "31 August"
+```
+
+`--scheme` accepts a scheme id or partial name from [`src/schemes.py`](src/schemes.py) (e.g. `pmjdy`, `sukanya samriddhi`).
+
+Unit tests for the opening framing, metadata parsing, and outcome classification live in [`tests/test_outbound.py`](tests/test_outbound.py).
+
 ## Testing
 
 The project includes an eval suite based on the LiveKit Agents [testing framework](https://docs.livekit.io/agents/build/testing/):

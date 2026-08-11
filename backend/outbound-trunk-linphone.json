@@ -1,0 +1,7 @@
+{
+  "trunk": {
+    "name": "pooja-outbound-linphone",
+    "address": "sip.linphone.org",
+    "numbers": ["*"]
+  }
+}
