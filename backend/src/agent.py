@@ -18,6 +18,8 @@ from livekit.agents import (
 )
 from livekit.plugins import deepgram, google, murf, noise_cancellation, silero
 
+from escalations import create_or_update_escalation, notify_discord
+from escalations import init_db as init_escalations_db
 from memory import add_do_not_call, forget_user_by_name, init_db, lookup_user, save_user
 from schemes import check_eligibility, get_documents
 
@@ -99,7 +101,19 @@ You can remember regular callers between calls so they are not treated like stra
 - You may learn new facts about the caller during the conversation (for example, which government savings schemes they are already checking, or their eligibility answers). To save them, call the "save_user_facts" tool with the caller's name and the facts.
 - CONSENT IS MANDATORY (Financial Services hard rule): Before you save anything, tell the caller you would like to remember this for next time, and ask their permission. If they say no, DO NOT call save_user_facts. If they stay silent or are unsure, do not save. Only save the facts they actually agree to.
 - Only save safe, non-sensitive facts: which schemes they have checked, their general eligibility answers, their preferred topics, their language. NEVER save account numbers, card numbers, full Aadhaar/PAN numbers, OTPs, PINs, passwords, phone numbers, balances, or any identifier. Never store written-out medical or financial account details.
-- If the caller asks you to forget them, call the "forget_user" tool with their name, confirm their record is deleted, and reassure them."""
+- If the caller asks you to forget them, call the "forget_user" tool with their name, confirm their record is deleted, and reassure them.
+
+HUMAN ESCALATION (know when to stop and ask for help)
+You are not equipped to resolve everything yourself. Two situations always need a real human, not you:
+1. The caller reports POSSIBLE FRAUD — money was already taken from an account, a suspicious transaction happened, or someone impersonated a bank/official and the caller acted on it. This is different from a general "how do I spot a scam" question, which you can answer yourself.
+2. The caller needs a DECISION YOU CANNOT MAKE — they dispute a scheme eligibility result, their application was rejected and they want it reviewed, or they explicitly ask to speak with a real person/advisor instead of you.
+When either happens:
+- Keep helping with what you can first (e.g. still tell them to report fraud via Sachet/1930 per the escalation script above — that guidance doesn't wait for consent).
+- Then tell the caller plainly what you'd like to send to a human team, in plain words (their name, a short summary of the issue, what you already checked, how urgent it seems, and how they'd like to be followed up with) and ASK PERMISSION before sending anything. If they say no, do not create the request — just let them know they can always call back or contact their bank/official channels directly.
+- If they agree, call "create_escalation" with a short, factual summary — never a full transcript, and never any OTP, PIN, password, CVV, or account/Aadhaar/PAN number even if the caller said one out loud.
+- After it succeeds, give them the reference ID it returns and an honest next step: a human will follow up, but do not promise a specific response time you don't actually know.
+- If the caller already has an open request from earlier in this call (or a prior call), a new report on the same issue updates that same ticket instead of creating a second one — you don't need to do anything differently, just call the tool again with the update.
+- A normal question (about UPI, savings, EMIs, schemes, etc. that you can actually answer) should NEVER trigger an escalation. Only these two situations do."""
 
 # Day 6: outbound reminder calls ("scheme deadline approaching for someone
 # already found eligible" — the Financial Services track's outbound trigger).
@@ -330,6 +344,65 @@ class Assistant(Agent):
             return "SCHEME_NOT_FOUND"
         return result
 
+    @function_tool
+    async def create_escalation(
+        self,
+        context: RunContext,
+        caller_name: str,
+        issue_summary: str,
+        already_checked: str,
+        urgency: str,
+        language: str,
+        follow_up_method: str,
+    ) -> str | dict:
+        """Create (or update) a human-escalation request. Only call this
+        AFTER the caller has explicitly agreed you may share their details
+        with a human team.
+
+        Use this only for the two situations that need a real human:
+        possible fraud (money already lost, a suspicious transaction, or an
+        impersonation attempt), or a decision you cannot make (a disputed
+        eligibility result, a rejected application, or an explicit request
+        to talk to a person). Never for questions you can answer yourself.
+
+        Keep the summary short and factual — never a full transcript, and
+        never an OTP, PIN, password, CVV, or account/Aadhaar/PAN number,
+        even if the caller said one out loud.
+
+        Args:
+            caller_name: The caller's name.
+            issue_summary: A short, factual description of what happened.
+            already_checked: What you already told the caller or verified
+                (e.g. "explained UPI scam reporting steps", "confirmed
+                eligibility tool says not eligible for PMSBY due to age").
+            urgency: One of "low", "medium", "high", "emergency".
+            language: The caller's preferred language for follow-up.
+            follow_up_method: How they'd like to be followed up with (e.g.
+                "call back on this number", "email", "next call to Pooja").
+        """
+        logger.info(
+            "Creating escalation for %s (urgency=%s): %s",
+            caller_name, urgency, issue_summary,
+        )
+        try:
+            record = create_or_update_escalation(
+                caller_name=caller_name,
+                issue_summary=issue_summary,
+                already_checked=already_checked,
+                urgency=urgency,
+                language=language,
+                follow_up_method=follow_up_method,
+            )
+            await notify_discord(record)
+        except Exception:
+            logger.exception("Failed to create escalation")
+            return "ESCALATION_FAILED"
+        return {
+            "reference_id": record["reference_id"],
+            "status": record["status"],
+            "urgency": record["urgency"],
+        }
+
 
 def _parse_outbound_metadata(raw_metadata: str) -> dict | None:
     """Parse job metadata set by outbound_caller.py into an outbound context.
@@ -383,8 +456,10 @@ async def my_agent(ctx: JobContext):
         "room": ctx.room.name,
     }
 
-    # Ensure the SQLite memory database is ready before the session starts.
+    # Ensure the SQLite memory + escalation databases are ready before the
+    # session starts.
     init_db()
+    init_escalations_db()
 
     # Day 6: outbound calls carry their context (caller name, scheme,
     # deadline, phone number) as job metadata, set by outbound_caller.py at

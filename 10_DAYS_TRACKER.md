@@ -157,11 +157,37 @@ A daily log of what was changed, built, and learned while building **Pooja** —
 
 ---
 
-## Day 7+
+## Day 7 — Know When to Ask for Human Help: "Pooja" Escalates Fraud & Disputed Decisions
+
+**Commit:** `—` — `Day 7: Added human-escalation tool with consent gate and Discord notification`
+
+**What changed / what was added:**
+- 🙋 **Two escalation triggers (Financial Services track)** — (1) the caller reports possible fraud (money already lost, a suspicious transaction, an impersonation attempt acted on — distinct from a general "how do scams work" question, which Pooja still answers herself), and (2) the caller needs a decision Pooja can't make (a disputed eligibility result, a rejected application, or an explicit request for a real person).
+- 🗂️ **New escalation-ticket layer** (`backend/src/escalations.py`) — a small SQLite queue (`escalations.db`) with a `create_or_update_escalation` function, short reference IDs (`ESC-XXXXXXXX`), urgency levels (`low`/`medium`/`high`/`emergency`), and status transitions (`open` → `in_progress` → `resolved`).
+- 🛡️ **Redaction before storage** — `issue_summary` and `already_checked` are stripped of anything that looks like an OTP, PIN, CVV, password, or account/Aadhaar/PAN-like number (including spaced Aadhaar formatting) before the ticket is saved or sent anywhere, even if the caller said it out loud.
+- 🔁 **Duplicate handling (advanced)** — a second report from the same caller with an open ticket updates that ticket (appends a note, bumps urgency) instead of creating a fragmenting duplicate.
+- 🧠 **New `create_escalation` tool + HUMAN ESCALATION prompt section** in `agent.py` — the prompt makes the tool call conditional on the caller's explicit consent: Pooja states what she wants to send in plain words and asks permission first; a "no" means nothing gets created.
+- 📣 **Discord webhook notification** — `escalations.notify_discord()` best-effort posts new/updated tickets to a Discord channel if `DISCORD_ESCALATION_WEBHOOK_URL` is configured; tickets are always saved locally regardless, so nothing is lost if the webhook isn't set up or fails.
+- 🖥️ **Status dashboard (advanced)** — `backend/src/view_escalations.py`, a small CLI that lists open/all tickets and moves them between `in_progress`/`resolved`, satisfying the "local database with a page that shows open requests" option without a web frontend.
+- 🧪 **New test suite** (`tests/test_escalations.py`, 9 tests) — ticket creation, dedup-and-update, resolved tickets not being reused, status-transition validation, urgency fallback, and sensitive-data redaction. Plus 2 new LLM-judged eval tests in `tests/test_agent.py` (`test_asks_permission_before_escalating_fraud`, `test_normal_question_does_not_escalate`) verifying the consent gate and that ordinary answerable questions never create a ticket.
+- 📖 **README** — new "Human escalation (Day 7)" section documenting the two triggers, consent flow, redaction rules, Discord webhook setup, and the CLI dashboard.
+
+**Files touched:**
+- `backend/src/escalations.py` (new — ticket storage, redaction, Discord notify)
+- `backend/src/view_escalations.py` (new — CLI status dashboard)
+- `backend/src/agent.py` (`create_escalation` tool, HUMAN ESCALATION prompt section, DB init)
+- `backend/tests/test_escalations.py` (new — 9 unit tests)
+- `backend/tests/test_agent.py` (+2 eval tests)
+- `backend/.env.example` (`DISCORD_ESCALATION_WEBHOOK_URL`)
+- `backend/README.md` (Day 7 section)
+- `10_DAYS_TRACKER.md`
+
+---
+
+## Day 8+
 
 | Day | Date | Focus | What changed / added | Status |
 |-----|------|-------|----------------------|--------|
-| Day 7 | — | TBD | TBD | ⏳ |
 | Day 8 | — | TBD | TBD | ⏳ |
 | Day 9 | — | TBD | TBD | ⏳ |
 | Day 10 | — | TBD | TBD | ⏳ |

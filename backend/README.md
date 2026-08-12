@@ -226,6 +226,38 @@ uv run python src/outbound_caller.py \
 
 Unit tests for the opening framing, metadata parsing, and outcome classification live in [`tests/test_outbound.py`](tests/test_outbound.py).
 
+## Human escalation (Day 7)
+
+Pooja doesn't try to resolve everything herself. Two situations always get handed to a human, per `SYSTEM_PROMPT`'s HUMAN ESCALATION section in [`src/agent.py`](src/agent.py):
+
+1. **Possible fraud** — money already lost, a suspicious transaction, or an impersonation attempt the caller acted on. (A general "how do I spot a scam" question is different — Pooja answers that herself.)
+2. **A decision Pooja cannot make** — a disputed scheme eligibility result, a rejected application, or the caller explicitly asking for a real person.
+
+### How it's wired
+
+- [`src/escalations.py`](src/escalations.py) is the storage + notification layer: a small SQLite ticket queue (`backend/escalations.db`) plus a best-effort post to a Discord webhook, if `DISCORD_ESCALATION_WEBHOOK_URL` is set. Every escalation gets a short reference ID (`ESC-XXXXXXXX`).
+- The `create_escalation` `function_tool` on `Assistant` (in `agent.py`) is the only thing that calls it. The prompt makes calling this tool conditional on the caller's explicit consent — Pooja must say what she wants to send and ask permission first; if the caller says no, nothing is created.
+- **Redaction:** the free-text summary fields (`issue_summary`, `already_checked`) are stripped of anything that looks like an OTP, PIN, CVV, password, or an account/Aadhaar/PAN-like number before they're stored or sent anywhere — even if the caller said one out loud on the call. `follow_up_value` (how to reach the caller back) is intentionally *not* redacted, since that's the whole point of the ticket, but the agent should only fill it in with what the caller just agreed to share.
+- **No full transcripts** — the agent composes a short factual summary itself; it never dumps the whole conversation into a ticket.
+- **Duplicate handling (advanced):** if the same caller already has an open (non-resolved) ticket, a new report on the same issue updates that ticket (appends a note, bumps urgency if higher) instead of creating a second one.
+- **Urgency levels (advanced):** `low` / `medium` / `high` / `emergency`, chosen by the agent based on the situation.
+- **Status view (advanced):** [`src/view_escalations.py`](src/view_escalations.py) is a tiny CLI "dashboard" — no web frontend needed:
+  ```bash
+  uv run python src/view_escalations.py            # open + in_progress tickets
+  uv run python src/view_escalations.py --all       # every ticket
+  uv run python src/view_escalations.py --start ESC-XXXXXXXX     # -> in_progress
+  uv run python src/view_escalations.py --resolve ESC-XXXXXXXX   # -> resolved
+  ```
+
+### Setup
+
+Escalations work with zero configuration — tickets always save locally. To also get a real-time notification:
+
+1. In Discord: Server Settings → Integrations → Webhooks → New Webhook → Copy Webhook URL.
+2. Set `DISCORD_ESCALATION_WEBHOOK_URL` in `.env.local`.
+
+Unit tests for creation, dedup, status transitions, and redaction live in [`tests/test_escalations.py`](tests/test_escalations.py). Two LLM-judged eval tests in `tests/test_agent.py` (`test_asks_permission_before_escalating_fraud`, `test_normal_question_does_not_escalate`) verify the consent gate and that ordinary questions never trigger a ticket.
+
 ## Testing
 
 The project includes an eval suite based on the LiveKit Agents [testing framework](https://docs.livekit.io/agents/build/testing/):

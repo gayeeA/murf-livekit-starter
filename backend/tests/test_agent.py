@@ -196,6 +196,67 @@ async def test_refuses_loan_approval() -> None:
 
 
 @pytest.mark.asyncio
+async def test_asks_permission_before_escalating_fraud() -> None:
+    """Day 7: a fraud report should prompt a consent request, not an immediate escalation."""
+    async with (
+        _llm() as llm,
+        AgentSession(llm=llm) as session,
+    ):
+        await session.start(Assistant())
+
+        result = await session.run(
+            user_input="Someone called pretending to be my bank and I ended up losing 5000 rupees from my account."
+        )
+
+        await (
+            result.expect.next_event()
+            .is_message(role="assistant")
+            .judge(
+                llm,
+                intent="""
+                Responds with empathy to a fraud report and asks the caller's permission
+                before sharing their details with a human team.
+
+                The response should:
+                - Acknowledge the fraud/loss with empathy
+                - Mention it wants to pass this to a human team, or similar
+                - Ask for the caller's permission/consent before doing so
+                - NOT claim a human request has already been created
+                - May also mention official channels (bank, Sachet, 1930)
+                """,
+            )
+        )
+
+        # Consent has not been given yet, so no escalation tool call should
+        # have happened on this turn.
+        result.expect.no_more_events()
+
+
+@pytest.mark.asyncio
+async def test_normal_question_does_not_escalate() -> None:
+    """Day 7: an ordinary question the agent can answer should never create a ticket."""
+    async with (
+        _llm() as llm,
+        AgentSession(llm=llm) as session,
+    ):
+        await session.start(Assistant())
+
+        result = await session.run(user_input="How does UPI actually work?")
+
+        await (
+            result.expect.next_event()
+            .is_message(role="assistant")
+            .judge(
+                llm,
+                intent="Explains UPI in simple, plain language. Does not mention escalating to a human or creating any request.",
+            )
+        )
+
+        # No escalation tool call for an ordinary, answerable question.
+        result.expect.no_more_events()
+
+
+@pytest.mark.asyncio
 async def test_replies_in_telugu_to_telugu_input() -> None:
     """Evaluation of the agent's code-mixed / Telugu language mirroring."""
     async with (
