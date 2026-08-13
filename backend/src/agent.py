@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from livekit import rtc
@@ -18,6 +19,8 @@ from livekit.agents import (
 )
 from livekit.plugins import deepgram, google, murf, noise_cancellation, silero
 
+from calls import init_db as init_calls_db
+from calls import new_call_id, record_call
 from escalations import create_or_update_escalation, notify_discord
 from escalations import init_db as init_escalations_db
 from memory import add_do_not_call, forget_user_by_name, init_db, lookup_user, save_user
@@ -161,12 +164,25 @@ def build_outbound_opening(name: str | None, scheme_name: str, deadline: str) ->
 
 
 class Assistant(Agent):
-    def __init__(self, outbound_context: dict | None = None) -> None:
+    def __init__(
+        self,
+        outbound_context: dict | None = None,
+        call_state: dict | None = None,
+    ) -> None:
         instructions = SYSTEM_PROMPT
         if outbound_context:
             instructions += OUTBOUND_PROMPT_ADDENDUM
         super().__init__(instructions=instructions)
         self._outbound_context = outbound_context
+        # Day 8: shared dict the entrypoint reads from when the call ends to
+        # decide "successful" vs "failed" (see calls.py for the definition).
+        # Tools below append to call_state["signals"] on real success paths.
+        self._call_state = call_state if call_state is not None else {"signals": []}
+
+    def _mark_success(self, signal: str) -> None:
+        signals = self._call_state.setdefault("signals", [])
+        if signal not in signals:
+            signals.append(signal)
 
     async def on_enter(self) -> None:
         """Deliver the first-turn greeting.
@@ -208,6 +224,10 @@ class Assistant(Agent):
             return "NOT_AN_OUTBOUND_CALL"
         logger.info("Caller opted out of future outbound calls: %s", phone_number)
         add_do_not_call(phone_number)
+        # Day 8: an opt-out is a definite, non-ambiguous outcome — record it
+        # so the call is logged as "user_declined" rather than a generic
+        # incomplete call.
+        self._call_state["opted_out"] = True
         return "OPTED_OUT"
 
     @function_tool
@@ -318,6 +338,9 @@ class Assistant(Agent):
         except Exception:
             logger.exception("Scheme eligibility lookup failed")
             return "LOOKUP_FAILED"
+        # Day 8 success signal: the caller reached a completed eligibility
+        # check, one of this track's defined "successful call" outcomes.
+        self._mark_success("eligibility_check_completed")
         return result
 
     @function_tool
@@ -342,6 +365,9 @@ class Assistant(Agent):
             return "LOOKUP_FAILED"
         if result is None:
             return "SCHEME_NOT_FOUND"
+        # Day 8 success signal: the caller received a document checklist,
+        # this track's other defined "successful call" outcome.
+        self._mark_success("documents_delivered")
         return result
 
     @function_tool
@@ -397,6 +423,11 @@ class Assistant(Agent):
         except Exception:
             logger.exception("Failed to create escalation")
             return "ESCALATION_FAILED"
+        # Day 8 success signal: the caller was appropriately escalated to a
+        # human for fraud/dispute handling — Pooja doing her job correctly
+        # by *not* trying to resolve it herself also counts as a successful
+        # call, same as the Health Access "appropriate escalation" example.
+        self._mark_success("escalation_created")
         return {
             "reference_id": record["reference_id"],
             "status": record["status"],
@@ -460,11 +491,26 @@ async def my_agent(ctx: JobContext):
     # session starts.
     init_db()
     init_escalations_db()
+    init_calls_db()
+
+    # Day 8: one row is written to calls.db when this call ends. call_state
+    # is a shared mutable dict the Assistant's tools update on real success
+    # paths (see Assistant._mark_success) and the close handler below reads
+    # from to decide the outcome. channel_state is filled in by the
+    # noise-cancellation callback, the earliest point we reliably know
+    # whether the linked participant is SIP or a browser.
+    call_id = new_call_id()
+    call_started_at = datetime.now(timezone.utc)
+    call_state: dict = {"signals": [], "opted_out": False, "silent_timeout": False, "language": ""}
+    channel_state = {"channel": "unknown"}
 
     # Day 6: outbound calls carry their context (caller name, scheme,
     # deadline, phone number) as job metadata, set by outbound_caller.py at
     # dispatch time. Inbound calls have no metadata, so this is None.
     outbound_context = _parse_outbound_metadata(ctx.job.metadata)
+    if outbound_context:
+        # Outbound reminder calls are always placed over SIP.
+        channel_state["channel"] = "sip"
 
     # Set up a voice AI pipeline using Murf Falcon, Gemini, Deepgram, and the LiveKit turn detector
     session = AgentSession(
@@ -522,6 +568,7 @@ async def my_agent(ctx: JobContext):
             )
         else:
             logger.info("Caller is still silent; closing gracefully.")
+            call_state["silent_timeout"] = True
             handle = session.say(
                 "మీకు ఎలాంటి ప్రశ్నలు లేకపోతే, నేను వెళతాను. "
                 "మళ్ళీ కాల్ చేయడానికి సంకోచించకండి. "
@@ -531,6 +578,57 @@ async def my_agent(ctx: JobContext):
             handle.add_done_callback(lambda _: session.shutdown())
 
     session.on("user_state_changed", _on_user_state_changed)
+
+    def _on_user_input_transcribed(ev) -> None:
+        # Day 8: best-effort language tag for the call-history table.
+        # Non-sensitive — just a language code like "te" or "en", never
+        # transcript text.
+        if getattr(ev, "language", None):
+            call_state["language"] = ev.language
+
+    session.on("user_input_transcribed", _on_user_input_transcribed)
+
+    _call_recorded = {"done": False}
+
+    def _on_session_close(ev) -> None:
+        # Day 8: write exactly one row per call, however the call ended.
+        if _call_recorded["done"]:
+            return
+        _call_recorded["done"] = True
+
+        signals = list(call_state.get("signals", []))
+        close_reason = str(getattr(ev, "reason", "") or "")
+        had_error = getattr(ev, "error", None) is not None
+
+        if call_state.get("opted_out"):
+            outcome, failure_type = "failed", "user_declined"
+        elif signals:
+            outcome, failure_type = "successful", ""
+        elif had_error:
+            outcome, failure_type = "failed", "error"
+        elif call_state.get("silent_timeout"):
+            outcome, failure_type = "failed", "no_response"
+        elif close_reason in ("user_initiated", "participant_disconnected"):
+            outcome, failure_type = "failed", "user_hangup"
+        else:
+            outcome, failure_type = "failed", "incomplete"
+
+        try:
+            record_call(
+                call_id=call_id,
+                channel=channel_state["channel"],
+                language=call_state.get("language", ""),
+                started_at=call_started_at,
+                ended_at=datetime.now(timezone.utc),
+                outcome=outcome,
+                failure_type=failure_type,
+                success_signals=signals,
+                close_reason=close_reason,
+            )
+        except Exception:
+            logger.exception("Failed to record call analytics for %s", call_id)
+
+    session.on("close", _on_session_close)
 
     # To use a realtime model instead of a voice pipeline, use the following session setup instead.
     # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))
@@ -550,18 +648,21 @@ async def my_agent(ctx: JobContext):
     # # Start the avatar and wait for it to join
     # await avatar.start(session, room=ctx.room)
 
+    def _select_noise_cancellation(params):
+        # Day 8: this is the earliest reliable point to know whether the
+        # linked participant is a SIP caller or a browser user, so it also
+        # records the call's channel for the dashboard.
+        is_sip = params.participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP
+        channel_state["channel"] = "sip" if is_sip else "browser"
+        return noise_cancellation.BVCTelephony() if is_sip else noise_cancellation.BVC()
+
     # Start the session, which initializes the voice pipeline and warms up the models
     await session.start(
-        agent=Assistant(outbound_context=outbound_context),
+        agent=Assistant(outbound_context=outbound_context, call_state=call_state),
         room=ctx.room,
         room_options=room_io.RoomOptions(
             audio_input=room_io.AudioInputOptions(
-                noise_cancellation=lambda params: (
-                    noise_cancellation.BVCTelephony()
-                    if params.participant.kind
-                    == rtc.ParticipantKind.PARTICIPANT_KIND_SIP
-                    else noise_cancellation.BVC()
-                ),
+                noise_cancellation=_select_noise_cancellation,
             ),
         ),
     )

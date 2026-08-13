@@ -258,6 +258,45 @@ Escalations work with zero configuration — tickets always save locally. To als
 
 Unit tests for creation, dedup, status transitions, and redaction live in [`tests/test_escalations.py`](tests/test_escalations.py). Two LLM-judged eval tests in `tests/test_agent.py` (`test_asks_permission_before_escalating_fraud`, `test_normal_question_does_not_escalate`) verify the consent gate and that ordinary questions never trigger a ticket.
 
+## Call analytics dashboard (Day 8)
+
+Every real call — browser or SIP — is logged once, when it ends, to `backend/calls.db`. A tiny stdlib-only web dashboard reads from it live; nothing on the dashboard is hardcoded.
+
+### Success definition (Financial Services track)
+
+A call is **successful** if the caller reached one of the concrete outcomes Pooja exists to deliver:
+
+1. Completed a government-scheme **eligibility check** (`check_scheme_eligibility` tool)
+2. Received a scheme's **document checklist** (`get_scheme_documents` tool)
+3. Had a **human-escalation ticket created** for fraud/dispute handling (`create_escalation` tool) — the "appropriate escalation" outcome, since knowing when *not* to try to solve it herself is also part of Pooja's job.
+
+A call that ends without reaching any of these is **failed** — that doesn't necessarily mean something broke. It's grouped into a failure type:
+
+| Failure type     | Meaning                                                              |
+| ---------------- | --------------------------------------------------------------------- |
+| `user_hangup`     | Caller left (or the participant disconnected) before reaching an outcome |
+| `user_declined`   | Caller explicitly asked to stop (e.g. opted out of outbound reminders)   |
+| `no_response`     | Caller went silent and the agent closed the call gracefully              |
+| `error`           | An unrecoverable STT/LLM/TTS error ended the session                     |
+| `incomplete`      | Call ended some other way without reaching an outcome                     |
+
+### How it's wired
+
+- [`src/calls.py`](src/calls.py) is the storage layer — a small SQLite log (`backend/calls.db`), one row per call, written exactly once when the session closes.
+- In [`src/agent.py`](src/agent.py): a `call_state` dict is created per call and passed into `Assistant`. Its three success-path tools call `self._mark_success(...)` when they genuinely complete (not on `LOOKUP_FAILED`/`SCHEME_NOT_FOUND`/`ESCALATION_FAILED`). The channel (`browser` vs `sip`) is captured from the room's noise-cancellation callback, the earliest point the linked participant's kind is known. A `session.on("close", ...)` handler reads `call_state` and writes the final row via `record_call()`.
+- **Privacy (Step 6):** only aggregate, non-identifying fields are stored — a call id, channel, timestamps, duration, outcome, failure type, and which outcome types were reached. No caller name, phone number, transcript, or financial detail ever lands in `calls.db`.
+
+### Running the dashboard
+
+```bash
+uv run python src/dashboard_server.py
+# open http://localhost:8787
+```
+
+It shows total / successful / failed calls, success rate, a failure-type breakdown, a browser-vs-SIP channel split, and a recent-calls table — and auto-refreshes every 5 seconds, so the numbers visibly climb as you make test calls (`uv run src/agent.py console`, or a real browser/SIP call).
+
+Unit tests for outcome classification and summary math live in [`tests/test_calls.py`](tests/test_calls.py).
+
 ## Testing
 
 The project includes an eval suite based on the LiveKit Agents [testing framework](https://docs.livekit.io/agents/build/testing/):
@@ -297,13 +336,19 @@ docker run --env-file .env.local murf-voice-agent
 ```
 backend/
 ├── src/
-│   ├── agent.py          # Agent entrypoint — pipeline, prompt, config, tools
-│   ├── memory.py          # SQLite-backed caller memory (Day 4)
-│   └── schemes.py         # Local government-scheme dataset + lookup (Day 5)
+│   ├── agent.py            # Agent entrypoint — pipeline, prompt, config, tools
+│   ├── memory.py           # SQLite-backed caller memory (Day 4)
+│   ├── schemes.py          # Local government-scheme dataset + lookup (Day 5)
+│   ├── escalations.py      # SQLite escalation ticket queue + Discord notify (Day 7)
+│   ├── view_escalations.py # CLI escalation dashboard (Day 7)
+│   ├── calls.py            # SQLite call-outcome log (Day 8)
+│   ├── dashboard_server.py # Stdlib web server for the call analytics dashboard (Day 8)
+│   └── dashboard_static/   # Dashboard HTML/CSS/JS (Day 8)
 ├── tests/
-│   ├── test_agent.py     # LLM-judged eval suite
-│   ├── test_memory.py    # Caller memory unit tests
-│   └── test_schemes.py   # Scheme eligibility/document unit tests
+│   ├── test_agent.py       # LLM-judged eval suite
+│   ├── test_memory.py      # Caller memory unit tests
+│   ├── test_schemes.py     # Scheme eligibility/document unit tests
+│   └── test_calls.py       # Call outcome classification + summary unit tests
 ├── .env.example           # Environment variable template
 ├── pyproject.toml         # Python dependencies (uv)
 ├── Dockerfile             # Production container

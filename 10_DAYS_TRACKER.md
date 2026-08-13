@@ -184,11 +184,35 @@ A daily log of what was changed, built, and learned while building **Pooja** —
 
 ---
 
-## Day 8+
+## Day 8 — Call Analytics Dashboard: Tracking How "Pooja" Is Actually Doing
+
+**Commit:** `—` — `Day 8: Added call outcome logging + call analytics dashboard`
+
+**What changed / what was added:**
+- 🎯 **Success definition (Financial Services track, from Day 2 objectives)** — a call is **successful** if the caller reached one of three concrete outcomes: completed a government-scheme **eligibility check**, received a scheme's **document checklist**, or had a **human-escalation ticket created** for fraud/dispute (the "appropriate escalation" outcome, since knowing when *not* to solve it herself is part of Pooja's job too). Anything else is a **failed** call — not necessarily something broke, just that the caller didn't reach one of those outcomes.
+- 🗂️ **New call-outcome log** (`backend/src/calls.py`) — a small SQLite table (`calls.db`), one row written per call, exactly once, when the session closes. Only aggregate/non-identifying fields are stored: call id, channel, timestamps, duration, outcome, failure type, and which outcome type was reached. **No caller name, phone number, transcript, or financial detail ever lands in this table** (Day-8 Step-6 hard rule).
+- 🧩 **Wired into `agent.py`** — a `call_state` dict is created per call and passed into `Assistant`; the three success-path tools (`check_scheme_eligibility`, `get_scheme_documents`, `create_escalation`) call `self._mark_success(...)` only on genuine success, never on `LOOKUP_FAILED`/`SCHEME_NOT_FOUND`/`ESCALATION_FAILED`. Channel (`browser` vs `sip`) is captured from the room's noise-cancellation callback — the earliest point the linked participant's kind is known. A `session.on("close", ...)` handler reads `call_state` and writes the final row.
+- 🏷️ **Failure-type classification (advanced)** — failed calls are grouped into `user_hangup`, `user_declined` (explicit opt-out), `no_response` (silence timeout), `error` (unrecoverable STT/LLM/TTS failure), or `incomplete` (any other non-outcome ending).
+- 🖥️ **New live dashboard** (`backend/src/dashboard_server.py` + `dashboard_static/index.html`) — a **zero-new-dependency**, Python-stdlib-only web server exposing `/api/summary` and `/api/calls`, serving a dark-themed page that shows Total/Successful/Failed calls, success rate, a failure-type breakdown, a browser-vs-SIP channel split, and a recent-calls table (advanced options: success rate, failure types, call history, channel filter data — all done). Auto-refreshes every 5s so counts visibly climb during a live demo. Run with `uv run python src/dashboard_server.py`, opens at `http://localhost:8787`.
+- 🧪 **New test suite** (`tests/test_calls.py`, 11 tests) — summary counting/success-rate math, failure-type fallback, channel breakdown, ordering/limit of recent calls, duration computation, invalid-outcome rejection, and a table-shape assertion proving no sensitive column exists to leak into.
+- 📖 **README** — new "Call analytics dashboard (Day 8)" section documenting the success definition, failure-type table, wiring, and how to run the dashboard.
+
+**Files touched:**
+- `backend/src/calls.py` (new — SQLite call-outcome log)
+- `backend/src/dashboard_server.py` (new — stdlib web server)
+- `backend/src/dashboard_static/index.html` (new — dashboard page)
+- `backend/src/agent.py` (`call_state` tracking, 3 tools mark success signals, channel capture, `session.on("close", ...)` handler, `init_calls_db()`)
+- `backend/tests/test_calls.py` (new — 11 unit tests)
+- `backend/.env.example` (`DASHBOARD_PORT`, `CALLS_DB_PATH`)
+- `backend/README.md` (Day 8 section + Project Structure update)
+- `10_DAYS_TRACKER.md`
+
+---
+
+## Day 9+
 
 | Day | Date | Focus | What changed / added | Status |
 |-----|------|-------|----------------------|--------|
-| Day 8 | — | TBD | TBD | ⏳ |
 | Day 9 | — | TBD | TBD | ⏳ |
 | Day 10 | — | TBD | TBD | ⏳ |
 
@@ -212,4 +236,3 @@ After each day's work, add a section above and/or fill the Day-N row. Keep it sh
 - Red-team prompts: `backend/src/RED_TEAM.md`
 - Frontend branding: `frontend/app-config.ts`
 - This file: `10_DAYS_TRACKER.md`
-
