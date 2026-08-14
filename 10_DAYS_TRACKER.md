@@ -209,11 +209,36 @@ A daily log of what was changed, built, and learned while building **Pooja** —
 
 ---
 
-## Day 9+
+## Day 9 — Hand Off to a Specialist Agent: "Pooja" Calls in the Scheme Desk
+
+**Commit:** `—` — `Day 9: Added Government Scheme Specialist agent with mid-call handoff`
+
+**What changed / what was added:**
+- 🧑‍💼 **One specialist, one job (Financial Services track)** — the **Government Scheme Specialist**, with a narrower job than the main agent: government scheme eligibility checks and document checklists only. Nothing else.
+- 🗂️ **New specialist agent** (`backend/src/specialists.py`) — `SchemeSpecialistAgent`, its own IDENTITY/JOB/LIMITS/GUARDRAILS/STYLE prompt, and the `check_scheme_eligibility`/`get_scheme_documents` tools **moved off** the main `Assistant` (Day 5) onto the specialist, since one agent shouldn't try to be an expert at everything.
+- 🔀 **Handoff mechanics** — a `function_tool` (`transfer_to_scheme_specialist` on the main agent) returns `(text, Agent)`; LiveKit Agents' multi-agent support detects the `Agent` in the return value and switches the session onto it automatically (`session.update_agent(...)`). The specialist is constructed with `chat_ctx=self.chat_ctx`, so **the caller never has to re-explain their question** — full conversation history carries over.
+- 📢 **Handoff is audible, not silent** — the main agent's prompt requires a short spoken line ("Let me connect you to our scheme specialist...") before the handoff tool is called; the specialist's `on_enter()` introduces itself ("Hi, this is Pooja's scheme desk...") the moment it takes over.
+- 🔁 **Hand-back (advanced)** — the specialist has its own `return_to_pooja` tool for when the caller's topic moves outside scheme eligibility/documents (savings, UPI, EMIs, scams, fraud escalation); same handoff pattern, reversed.
+- 🧯 **Failed-handoff handling (advanced)** — `transfer_to_scheme_specialist` wraps specialist construction in `try/except`; on failure it returns the plain string `"HANDOFF_FAILED"` (no `Agent`, so no handoff occurs), and the prompt tells the main agent to apologise and suggest the bank branch rather than leaving the caller stuck.
+- 🔗 **Shared state across the handoff (advanced)** — new `backend/src/call_signals.py` holds the `mark_success()` helper both agents call into the same shared `call_state` dict (Day 8), and `outbound_context` (Day 6) is threaded through both directions too, so a scheme lookup completed *after* a handoff still counts correctly on the Day 8 dashboard, and an outbound-reminder call keeps its framing if handed back.
+- 🧪 **New test suite** (`tests/test_specialists.py`, 6 tests) — handoff returns a specialist sharing `call_state`/`outbound_context`, failed-handoff fallback, specialist tools marking success on the shared state, and hand-back constructing a proper `Assistant`. Plus 2 new LLM-judged eval tests in `tests/test_agent.py` verifying a scheme-eligibility question triggers exactly one handoff (with an announcement) and an ordinary UPI question does not.
+- 📖 **README** — new "Specialist handoff — Government Scheme Desk (Day 9)" section; Day 5's tools section updated to point at the new location.
+
+**Files touched:**
+- `backend/src/specialists.py` (new — `SchemeSpecialistAgent`)
+- `backend/src/call_signals.py` (new — shared `mark_success()` helper)
+- `backend/src/agent.py` (removed 2 scheme tools + prompt section, added `transfer_to_scheme_specialist`, `chat_ctx` passthrough on `Assistant.__init__`)
+- `backend/tests/test_specialists.py` (new — 6 unit tests)
+- `backend/tests/test_agent.py` (+2 eval tests)
+- `backend/README.md` (Day 9 section, Day 5 section update, Project Structure update)
+- `10_DAYS_TRACKER.md`
+
+---
+
+## Day 10+
 
 | Day | Date | Focus | What changed / added | Status |
 |-----|------|-------|----------------------|--------|
-| Day 9 | — | TBD | TBD | ⏳ |
 | Day 10 | — | TBD | TBD | ⏳ |
 
 ---

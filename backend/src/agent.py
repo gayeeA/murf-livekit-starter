@@ -14,17 +14,19 @@ from livekit.agents import (
     RunContext,
     cli,
     function_tool,
+    llm,
     room_io,
     tokenize,
 )
 from livekit.plugins import deepgram, google, murf, noise_cancellation, silero
 
+from call_signals import mark_success
 from calls import init_db as init_calls_db
 from calls import new_call_id, record_call
 from escalations import create_or_update_escalation, notify_discord
 from escalations import init_db as init_escalations_db
 from memory import add_do_not_call, forget_user_by_name, init_db, lookup_user, save_user
-from schemes import check_eligibility, get_documents
+from specialists import SchemeSpecialistAgent
 
 logger = logging.getLogger("agent")
 
@@ -62,12 +64,11 @@ A successful call does these three things:
 KNOWLEDGE
 You know everyday financial basics: savings and budgeting, UPI payments and common scam patterns, EMIs and interest, KYC, and where to go for official help. Your knowledge stops there. You do not have access to the caller's accounts, balances, transactions, credit scores, or any personal data. You do not know current market prices, interest rates being offered today, or live gold/stock rates. If a caller needs account-specific facts or a live rate, say you cannot see those and point them to their bank or the official source.
 
-GOVERNMENT SCHEME LOOKUP (tools, not memory)
-You have a small local reference dataset of common government financial-inclusion schemes (Jan Dhan bank accounts, PMSBY/PMJJBY insurance, Atal Pension Yojana, Sukanya Samriddhi Yojana, PM Vishwakarma, Stand-Up India, Mudra loans). Never guess scheme rules from general knowledge.
-- If a caller asks "what schemes am I eligible for" or wants help with a savings/insurance/pension/loan scheme, gather what you need conversationally (their age, roughly whether they have a bank account already, occupation if relevant, gender if relevant to a scheme like Sukanya Samriddhi) and call "check_scheme_eligibility". Only ask for what's needed for the schemes the caller cares about — do not interrogate them with every field up front.
-- Speak the results as a short spoken list, not a data dump: name the top 1-3 matching schemes in plain language, what each is for, and only go deeper if the caller asks. Always mention the data's as-of date once, briefly (e.g. "as of my last update in April") and tell them to confirm final details at their bank branch, since scheme rules can change.
-- If the caller wants to know what papers to carry, call "get_scheme_documents" with the scheme name and read the checklist out as a short spoken list.
-- If either tool comes back with a lookup-failed result, say so plainly — for example "I'm having trouble reaching my scheme information right now, let's try that again in a moment, or you can check with your bank branch" — never invent scheme names, amounts, or eligibility rules yourself.
+SPECIALIST HANDOFF — GOVERNMENT SCHEMES
+Scheme eligibility checks and document checklists are handled by a specialist, not you directly — you do not have scheme-lookup tools yourself.
+- If the caller asks "what schemes am I eligible for", wants help with a savings/insurance/pension/loan scheme, or asks what documents a scheme needs, say a short line first, like "Let me connect you to our scheme specialist who can check that for you" — then call "transfer_to_scheme_specialist". Never try to guess scheme rules or eligibility yourself.
+- If the handoff tool returns "HANDOFF_FAILED", apologise once, say you're having trouble reaching the scheme specialist right now, and suggest trying again in a moment or checking with their bank branch — never invent scheme names, amounts, or eligibility rules yourself.
+- A general question about savings, UPI, EMIs, or scams is NOT a scheme-eligibility question — keep answering those yourself. Only hand off for scheme eligibility or document requests specifically.
 
 LANGUAGE
 You are fluent in Telugu, Hindi, and English, and you naturally code-switch like a real Indian speaker. Always mirror the caller's language and register:
@@ -139,9 +140,10 @@ the person asked for. They did not choose to call in, so:
 - If it's a bad time, offer to keep it to one sentence or end the call;
   never insist on continuing.
 - Otherwise, deliver the reminder about the scheme and its deadline in plain
-  language, answer questions using your normal tools (scheme eligibility,
-  documents), and only offer to note their interest down with their
-  explicit consent, per the MEMORY & PERSONALISATION rules above."""
+  language. If they want a fresh eligibility check or a document checklist,
+  hand off to the scheme specialist as usual (see SPECIALIST HANDOFF above),
+  and only offer to note their interest down with their explicit consent,
+  per the MEMORY & PERSONALISATION rules above."""
 
 
 def build_outbound_opening(name: str | None, scheme_name: str, deadline: str) -> str:
@@ -168,21 +170,22 @@ class Assistant(Agent):
         self,
         outbound_context: dict | None = None,
         call_state: dict | None = None,
+        chat_ctx: llm.ChatContext | None = None,
     ) -> None:
         instructions = SYSTEM_PROMPT
         if outbound_context:
             instructions += OUTBOUND_PROMPT_ADDENDUM
-        super().__init__(instructions=instructions)
+        super().__init__(instructions=instructions, chat_ctx=chat_ctx)
         self._outbound_context = outbound_context
         # Day 8: shared dict the entrypoint reads from when the call ends to
         # decide "successful" vs "failed" (see calls.py for the definition).
         # Tools below append to call_state["signals"] on real success paths.
+        # Day 9: the same dict is threaded through a handoff to/from the
+        # scheme specialist, so a success there still counts for this call.
         self._call_state = call_state if call_state is not None else {"signals": []}
 
     def _mark_success(self, signal: str) -> None:
-        signals = self._call_state.setdefault("signals", [])
-        if signal not in signals:
-            signals.append(signal)
+        mark_success(self._call_state, signal)
 
     async def on_enter(self) -> None:
         """Deliver the first-turn greeting.
@@ -294,81 +297,27 @@ class Assistant(Agent):
         return "DELETED" if removed else "NO_RECORD_FOUND"
 
     @function_tool
-    async def check_scheme_eligibility(
-        self,
-        context: RunContext,
-        age: int | None = None,
-        occupation: str | None = None,
-        annual_income: int | None = None,
-        gender: str | None = None,
-        has_bank_account: bool | None = None,
-    ) -> str | dict:
-        """Check which government financial-inclusion schemes the caller is
-        likely eligible for, based on answers collected so far in the call.
+    async def transfer_to_scheme_specialist(self, context: RunContext):
+        """Hand off to the government scheme specialist for eligibility
+        checks and document checklists.
 
-        Call this whenever the caller asks what schemes they qualify for, or
-        asks about a specific kind of scheme (a bank account, insurance,
-        pension, a girl child savings account, or a business loan). Pass only
-        the fields the caller has actually told you; leave the rest as None
-        rather than guessing.
-
-        Args:
-            age: Caller's age in years, if known.
-            occupation: Caller's occupation in a few words (e.g. "tailor",
-                "shopkeeper", "daily wage laborer"), if relevant and known.
-            annual_income: Caller's rough annual household income in rupees,
-                if they've shared it.
-            gender: Caller's gender, if relevant to the schemes being asked
-                about (e.g. Sukanya Samriddhi Yojana is for a girl child).
-            has_bank_account: Whether the caller already has a savings bank
-                account, if known.
+        Call this whenever the caller wants to know what government schemes
+        they qualify for, or what documents a scheme needs. Say a short
+        line like "connecting you to our scheme specialist" first — this
+        tool switches the conversation over to them, carrying over
+        everything said so far so the caller doesn't repeat themselves.
         """
-        logger.info(
-            "Checking scheme eligibility: age=%s occupation=%s income=%s gender=%s bank=%s",
-            age, occupation, annual_income, gender, has_bank_account,
-        )
+        logger.info("Handing off to the government scheme specialist")
         try:
-            result = check_eligibility(
-                age=age,
-                occupation=occupation,
-                annual_income=annual_income,
-                gender=gender,
-                has_bank_account=has_bank_account,
+            specialist = SchemeSpecialistAgent(
+                chat_ctx=self.chat_ctx,
+                call_state=self._call_state,
+                outbound_context=self._outbound_context,
             )
         except Exception:
-            logger.exception("Scheme eligibility lookup failed")
-            return "LOOKUP_FAILED"
-        # Day 8 success signal: the caller reached a completed eligibility
-        # check, one of this track's defined "successful call" outcomes.
-        self._mark_success("eligibility_check_completed")
-        return result
-
-    @function_tool
-    async def get_scheme_documents(self, context: RunContext, scheme_name: str) -> str | dict:
-        """Get the document checklist a caller needs to apply for a named
-        government scheme.
-
-        Call this after a scheme has come up in the conversation (either the
-        caller named it, or it was one of the results from
-        "check_scheme_eligibility") and the caller asks what papers or
-        documents they need.
-
-        Args:
-            scheme_name: The scheme's name as discussed (e.g. "Jan Dhan",
-                "Sukanya Samriddhi", "Mudra loan").
-        """
-        logger.info("Looking up documents for scheme: %s", scheme_name)
-        try:
-            result = get_documents(scheme_name)
-        except Exception:
-            logger.exception("Scheme document lookup failed")
-            return "LOOKUP_FAILED"
-        if result is None:
-            return "SCHEME_NOT_FOUND"
-        # Day 8 success signal: the caller received a document checklist,
-        # this track's other defined "successful call" outcome.
-        self._mark_success("documents_delivered")
-        return result
+            logger.exception("Failed to start the scheme specialist")
+            return "HANDOFF_FAILED"
+        return "Connecting the caller to the scheme specialist now.", specialist
 
     @function_tool
     async def create_escalation(

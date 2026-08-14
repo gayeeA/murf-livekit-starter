@@ -178,14 +178,14 @@ Default is Google Gemini. To switch:
 
 ## Tools — government scheme lookup (Day 5)
 
-Pooja can look up common government financial-inclusion schemes (Jan Dhan bank accounts, PMSBY/PMJJBY insurance, Atal Pension Yojana, Sukanya Samriddhi Yojana, PM Vishwakarma, Stand-Up India, Mudra loans) via two `function_tool`s in [`src/agent.py`](src/agent.py):
+Pooja can look up common government financial-inclusion schemes (Jan Dhan bank accounts, PMSBY/PMJJBY insurance, Atal Pension Yojana, Sukanya Samriddhi Yojana, PM Vishwakarma, Stand-Up India, Mudra loans) via two `function_tool`s. **As of Day 9, these live on the Scheme Specialist agent** ([`src/specialists.py`](src/specialists.py)), not the main agent — see the Day 9 section below for why:
 
 - `check_scheme_eligibility(age, occupation, annual_income, gender, has_bank_account)` — checks the caller's answers against each scheme's rules and returns likely-eligible schemes plus near-misses.
 - `get_scheme_documents(scheme_name)` — returns the document checklist for a named scheme.
 
 **Data source: this is a local, hand-built dataset, not a live API.** There is no free, machine-readable eligibility API for these government schemes — the authoritative sources are static pages/PDFs published by the Department of Financial Services, PFRDA, and NSI (linked in [`src/schemes.py`](src/schemes.py)). The eligibility rules were curated by hand from those official sources and are marked with an `data_as_of` date (`schemes.DATA_AS_OF`). The agent always states that date when reading out results and tells the caller to confirm final details at their bank branch, since scheme terms do change over time.
 
-**Failure handling:** both tools wrap the lookup in a `try/except` and return `"LOOKUP_FAILED"` (or `"SCHEME_NOT_FOUND"` for an unknown scheme name) instead of raising. The `SYSTEM_PROMPT`'s GOVERNMENT SCHEME LOOKUP section instructs the agent to say so plainly to the caller and suggest trying again or contacting their bank — never to invent scheme names, amounts, or rules.
+**Failure handling:** both tools wrap the lookup in a `try/except` and return `"LOOKUP_FAILED"` (or `"SCHEME_NOT_FOUND"` for an unknown scheme name) instead of raising. The specialist's prompt instructs it to say so plainly to the caller and suggest trying again or contacting their bank — never to invent scheme names, amounts, or rules.
 
 Unit tests for the eligibility logic and document lookup live in [`tests/test_schemes.py`](tests/test_schemes.py).
 
@@ -297,6 +297,26 @@ It shows total / successful / failed calls, success rate, a failure-type breakdo
 
 Unit tests for outcome classification and summary math live in [`tests/test_calls.py`](tests/test_calls.py).
 
+## Specialist handoff — Government Scheme Desk (Day 9)
+
+Pooja's main agent handles everyday financial questions well, but scheme eligibility (matching age/income/occupation/gender against real rules) and document checklists deserve a narrower, sharper-focused agent rather than an ever-longer generalist prompt. Day 9 splits that job out into its own specialist and a mid-call handoff between agents.
+
+### How it's wired
+
+- [`src/specialists.py`](src/specialists.py) — the `SchemeSpecialistAgent`, with its own instructions (IDENTITY/JOB/LIMITS/GUARDRAILS/STYLE), and the two scheme tools moved off the main agent (see the Day 5 section above).
+- **The handoff itself** is a `function_tool` returning a tuple: `return "Connecting the caller to the scheme specialist now.", specialist`. LiveKit Agents' multi-agent support detects the `Agent` instance in the return value and calls `session.update_agent(...)` automatically — see `transfer_to_scheme_specialist` in [`src/agent.py`](src/agent.py) and [LiveKit's agent handoff docs](https://docs.livekit.io/agents/logic/agents-handoffs/).
+- **Context carries over** — the specialist is constructed with `chat_ctx=self.chat_ctx`, so it sees everything said so far and the caller never repeats themselves. It's also handed the shared `call_state` dict (Day 8) and `outbound_context` (Day 6), so success signals and outbound-call framing stay correct across the handoff.
+- **The handoff is announced, not silent** — the main agent's `SPECIALIST HANDOFF` prompt section requires a short spoken line ("Let me connect you to our scheme specialist...") before calling the tool, and the specialist's `on_enter()` introduces itself ("Hi, this is Pooja's scheme desk...") the moment it takes over.
+- **Hand-back (advanced)** — the specialist has its own `return_to_pooja` tool for when the caller raises a topic outside scheme eligibility/documents (savings, UPI, EMIs, scams, escalation). It returns the same handoff pattern in reverse, `chat_ctx` included.
+- **Failed handoff (advanced)** — `transfer_to_scheme_specialist` wraps specialist construction in `try/except` and returns the plain string `"HANDOFF_FAILED"` (no `Agent` in the return value, so no handoff occurs) if it can't start; the prompt tells the main agent to apologise and suggest the bank branch instead of leaving the caller stuck.
+- **Shared data across agents (advanced)** — since `check_scheme_eligibility`/`get_scheme_documents` call the same `call_signals.mark_success()` helper against the same shared `call_state` dict regardless of which agent is active, a scheme lookup done after a handoff still counts correctly toward the Day 8 dashboard's "successful call" numbers.
+
+### Routing
+
+Scheme eligibility / document questions → specialist. Everything else (savings, UPI, EMIs, scam questions, fraud/escalation) → stays with the main agent. A general "how do scams work" question is explicitly *not* routed to the specialist, same distinction as the Day 7 escalation triggers.
+
+Unit tests for the handoff mechanics (state/context propagation, failure handling, hand-back) live in [`tests/test_specialists.py`](tests/test_specialists.py). Two LLM-judged eval tests in `tests/test_agent.py` (`test_hands_off_to_scheme_specialist_for_eligibility_question`, `test_normal_question_does_not_hand_off_to_specialist`) verify the routing itself.
+
 ## Testing
 
 The project includes an eval suite based on the LiveKit Agents [testing framework](https://docs.livekit.io/agents/build/testing/):
@@ -343,12 +363,15 @@ backend/
 │   ├── view_escalations.py # CLI escalation dashboard (Day 7)
 │   ├── calls.py            # SQLite call-outcome log (Day 8)
 │   ├── dashboard_server.py # Stdlib web server for the call analytics dashboard (Day 8)
-│   └── dashboard_static/   # Dashboard HTML/CSS/JS (Day 8)
+│   ├── dashboard_static/   # Dashboard HTML/CSS/JS (Day 8)
+│   ├── specialists.py      # Government Scheme Specialist agent (Day 9)
+│   └── call_signals.py     # Shared success-signal helper (Day 8/9)
 ├── tests/
 │   ├── test_agent.py       # LLM-judged eval suite
 │   ├── test_memory.py      # Caller memory unit tests
 │   ├── test_schemes.py     # Scheme eligibility/document unit tests
-│   └── test_calls.py       # Call outcome classification + summary unit tests
+│   ├── test_calls.py       # Call outcome classification + summary unit tests
+│   └── test_specialists.py # Handoff mechanics unit tests (Day 9)
 ├── .env.example           # Environment variable template
 ├── pyproject.toml         # Python dependencies (uv)
 ├── Dockerfile             # Production container

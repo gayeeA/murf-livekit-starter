@@ -257,6 +257,56 @@ async def test_normal_question_does_not_escalate() -> None:
 
 
 @pytest.mark.asyncio
+async def test_hands_off_to_scheme_specialist_for_eligibility_question() -> None:
+    """Day 9: a scheme-eligibility question should hand off to the specialist."""
+    from specialists import SchemeSpecialistAgent
+
+    async with (
+        _llm() as llm,
+        AgentSession(llm=llm) as session,
+    ):
+        await session.start(Assistant())
+
+        result = await session.run(
+            user_input="I'm 22 years old and don't have a bank account yet. What government schemes am I eligible for?"
+        )
+
+        handoff_events = [e for e in result.events if e.type == "agent_handoff"]
+        assert len(handoff_events) == 1, f"expected exactly one handoff, got events: {result.events}"
+        assert isinstance(handoff_events[0].new_agent, SchemeSpecialistAgent)
+
+        # The caller should be told a handoff is happening, not left in silence.
+        message_events = [
+            e for e in result.events if e.type == "message" and e.item.role == "assistant"
+        ]
+        assert message_events, "expected the main agent to say something before handing off"
+
+
+@pytest.mark.asyncio
+async def test_normal_question_does_not_hand_off_to_specialist() -> None:
+    """Day 9: an ordinary question should stay with the main agent."""
+    async with (
+        _llm() as llm,
+        AgentSession(llm=llm) as session,
+    ):
+        await session.start(Assistant())
+
+        result = await session.run(user_input="How does UPI actually work?")
+
+        handoff_events = [e for e in result.events if e.type == "agent_handoff"]
+        assert not handoff_events, f"did not expect a handoff, got events: {result.events}"
+
+        await (
+            result.expect.next_event()
+            .is_message(role="assistant")
+            .judge(
+                llm,
+                intent="Explains UPI in simple, plain language. Does not mention transferring or connecting to a specialist.",
+            )
+        )
+
+
+@pytest.mark.asyncio
 async def test_replies_in_telugu_to_telugu_input() -> None:
     """Evaluation of the agent's code-mixed / Telugu language mirroring."""
     async with (
