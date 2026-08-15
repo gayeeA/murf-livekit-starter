@@ -235,13 +235,21 @@ A daily log of what was changed, built, and learned while building **Pooja** —
 
 ---
 
-## Day 10+
+## Day 10 — Share Your Voice Agent Journey
 
-| Day | Date | Focus | What changed / added | Status |
-|-----|------|-------|----------------------|--------|
-| Day 10 | — | TBD | TBD | ⏳ |
+**Commit:** `—` — `Day 10: Blog post + LinkedIn recap of the 10-day build`
+
+**What changed / what was added:**
+- 📝 **Blog post** ([`DAY10_BLOG_POST.md`](DAY10_BLOG_POST.md)) — a public write-up of the whole build: the problem and who Pooja is for, how the STT→LLM→TTS→LiveKit pipeline works, the features that best tell the story (guardrails, memory, scheme lookup, outbound calls, human escalation, the analytics dashboard, the Day 9 specialist handoff), three real difficulties hit during the build and how they were resolved, and a practical "build it yourself" section (clone, add API keys, run both halves, talk to it).
+- 🔗 **LinkedIn recap** — summarizes the 10-day build, credits Murf Falcon TTS by name, tags Murf AI, and uses #VoiceForBharat, per the Day 10 submission requirements.
+- 🐛 **Two real bugs surfaced and diagnosed while preparing today's content** (folded into the blog's "hard parts" section): the frontend `next dev` process dying silently mid-session (diagnosed via `Get-NetTCPConnection` showing nothing on port 3000 — not a LiveKit/protocol issue as the browser error first suggested), and a one-time `HANDOFF_FAILED` on the Day 9 scheme-specialist handoff that turned out to be a symptom of that same dead frontend rather than a bug in the handoff code — confirmed by reproducing the full handoff → eligibility-check flow cleanly against a freshly restarted backend.
+
+**Files touched:**
+- `DAY10_BLOG_POST.md` (new — blog draft, ready to paste into DEV/Hashnode/Medium)
+- `10_DAYS_TRACKER.md`
 
 ---
+
 
 ## How to update this tracker
 
